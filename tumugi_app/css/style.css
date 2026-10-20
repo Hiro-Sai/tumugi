@@ -1137,6 +1137,35 @@ h1 {
   opacity: 1;
 }
 
+/* ========== 設定モーダル ========== */
+/* パスワードの欄を足して縦に長くなったため、画面が低いときはスクロールする */
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(184,115,51,0.25) transparent;
+}
+
+.password-setting-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 0.5px solid var(--divider);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.password-change-btn {
+  align-self: flex-start;
+}
+
+.password-change-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ========== クレジットモーダル ========== */
 .credit-card {
   width: 480px;

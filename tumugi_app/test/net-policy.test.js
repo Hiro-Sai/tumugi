@@ -25,7 +25,7 @@ function assertRejected(cases) {
 // -----------------------------------------
 // buildRelayUrl
 // -----------------------------------------
-test("buildRelayUrl: 許可した8つの組は URL を返す", () => {
+test("buildRelayUrl: 許可した9つの組は URL を返す", () => {
   const cases = [
     ["ollama",   "/api/chat",                             "POST", "http://127.0.0.1:11434/api/chat"],
     ["ollama",   "/api/tags",                             "GET",  "http://127.0.0.1:11434/api/tags"],
@@ -35,6 +35,7 @@ test("buildRelayUrl: 許可した8つの組は URL を返す", () => {
     ["server",   "/login.php",                            "POST", "http://127.0.0.1:8080/api/login.php"],
     ["server",   "/save_emotion.php",                     "POST", "http://127.0.0.1:8080/api/save_emotion.php"],
     ["server",   "/dashboard_data.php",                   "GET",  "http://127.0.0.1:8080/api/dashboard_data.php"],
+    ["server",   "/change_password.php",                  "POST", "http://127.0.0.1:8080/api/change_password.php"],
   ];
   for (const [service, reqPath, method, expected] of cases) {
     assert.equal(buildRelayUrl(service, reqPath, method), expected, `${service} ${method} ${reqPath}`);
@@ -66,6 +67,7 @@ test("buildRelayUrl: メソッドが違えば拒否する", () => {
     ["ollama", "/api/tags",          "POST"],
     ["ollama", "/api/chat",          "post"],
     ["server", "/dashboard_data.php", "POST"],
+    ["server", "/change_password.php", "GET"],
   ]);
 });
 

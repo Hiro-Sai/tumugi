@@ -54,17 +54,28 @@ function setCorsHeaders(): void {
 }
 
 // -----------------------------------------
-// トークン検証（Authorization: Bearer <token> を想定）
-// 成功時は employee_id を返す。失敗時は null
+// Authorization: Bearer <token> のトークン文字列を返す。なければ null
+// （change_password.php が「今のトークン以外」を消すときにも使う）
 // -----------------------------------------
-function verifyToken(): ?int {
+function getBearerToken(): ?string {
     $headers = getallheaders();
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
 
     if (!preg_match('/Bearer\s+(.+)/', $authHeader, $matches)) {
         return null;
     }
-    $token = $matches[1];
+    return $matches[1];
+}
+
+// -----------------------------------------
+// トークン検証（Authorization: Bearer <token> を想定）
+// 成功時は employee_id を返す。失敗時は null
+// -----------------------------------------
+function verifyToken(): ?int {
+    $token = getBearerToken();
+    if ($token === null) {
+        return null;
+    }
 
     $pdo = getDbConnection();
     $stmt = $pdo->prepare(

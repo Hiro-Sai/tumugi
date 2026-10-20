@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   memoryGet:    () => ipcRenderer.invoke("memory:get"),
   memorySet:    (memory) => ipcRenderer.invoke("memory:set", memory),
   memoryDelete: () => ipcRenderer.invoke("memory:delete"),
+  // パスワードを変えたあとに、記憶の鍵を新しいパスワードのものに付け替える（true＝付け替えた）
+  memoryRekey:  (newPassword) => ipcRenderer.invoke("memory:rekey", newPassword),
+  // 展示モードなら true
+  isExhibitMode: () => ipcRenderer.invoke("app:isExhibit"),
 
   loginSuccess: () => ipcRenderer.send("auth:login-success"),
   logout: () => ipcRenderer.send("auth:logout"),

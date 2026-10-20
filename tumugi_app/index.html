@@ -48,12 +48,12 @@
           <span>記憶</span>
         </button>
 
-        <!-- プライバシー設定ボタン（感情ログ同意の確認・撤回のみ。プロンプト・モデル編集UIは
+        <!-- 設定ボタン（感情ログ同意の確認・撤回と、パスワードの変更。プロンプト・モデル編集UIは
              企業向け展開に伴い一般社員向けUIから廃止済み。仕組み自体は
              script.js内に残しており、配布前に運用者が設定する想定） -->
         <button id="privacyBtn" class="memory-btn">
           <span>🔒</span>
-          <span>プライバシー設定</span>
+          <span>設定</span>
         </button>
 
         <!-- ログアウト -->
@@ -120,20 +120,40 @@
     </div>
   </div>
 
-  <!-- 設定モーダル（感情ログ同意の確認・撤回のみ） -->
+  <!-- 設定モーダル（感情ログ同意の確認・撤回と、パスワードの変更） -->
   <div id="promptModal" class="memory-modal" style="display:none;">
     <div class="memory-card">
       <div class="memory-header">
-        <h3 class="memory-title">プライバシー設定</h3>
+        <h3 class="memory-title">設定</h3>
         <button id="privacyCloseBtn" class="memory-close">✕</button>
       </div>
 
-      <div style="padding:20px 24px 24px;">
+      <div class="settings-body">
         <!-- 感情ログ送信の同意設定 -->
         <div id="consentSettingBlock">
           <label class="prompt-label">感情ログの送信について</label>
           <p id="consentStatusText" class="model-check-result"></p>
           <button class="model-check-btn" id="consentToggleBtn">切り替える</button>
+        </div>
+
+        <!-- パスワードの変更（展示モードでは script.js が欄ごと隠す） -->
+        <div id="passwordSettingBlock" class="password-setting-block">
+          <label class="prompt-label">パスワードの変更</label>
+          <div class="setup-field">
+            <label class="setup-label" for="currentPasswordInput">今のパスワード</label>
+            <input type="password" id="currentPasswordInput" class="setup-input" autocomplete="current-password">
+          </div>
+          <div class="setup-field">
+            <label class="setup-label" for="newPasswordInput">新しいパスワード（8文字以上）</label>
+            <input type="password" id="newPasswordInput" class="setup-input" autocomplete="new-password">
+          </div>
+          <div class="setup-field">
+            <label class="setup-label" for="confirmPasswordInput">新しいパスワード（もう一度）</label>
+            <input type="password" id="confirmPasswordInput" class="setup-input" autocomplete="new-password">
+          </div>
+          <p class="prompt-hint">今のパスワードを5回間違えると、ログインも含めて15分ほど使えなくなります</p>
+          <button class="model-check-btn password-change-btn" id="passwordChangeBtn">変更する</button>
+          <p id="passwordChangeResult" class="model-check-result" role="status"></p>
         </div>
       </div>
     </div>
@@ -266,11 +286,12 @@
     </div>
   </div>
 
-  <!-- utils.js → auth.js → safety.js → prompt.js → lipsync.js → script.js の順で読み込む -->
+  <!-- utils.js → auth.js → safety.js → prompt.js → password.js → lipsync.js → script.js の順で読み込む -->
  <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/safety.js"></script>
   <script src="js/prompt.js"></script>
+  <script src="js/password.js"></script>
   <script src="js/lipsync.js"></script>
   <script src="js/script.js"></script>
 </body>

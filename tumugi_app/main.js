@@ -4,7 +4,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const Store = require("electron-store");
 const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaModel } = require("./net-policy");
-const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory } = require("./memory-crypto");
+const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("./memory-crypto");
 
 const store = new Store();
 
@@ -252,6 +252,35 @@ ipcMain.handle("memory:delete", () => {
   store.delete(memorySession.storeKey);
   return true;
 });
+
+// パスワードを変えたとき（サーバーでの変更が成功したあと）に、記憶の鍵を新しいパスワードのものに付け替える。
+// 保存済みの記憶は、新しい鍵で暗号化し直す。読めない記憶（壊れているなど）は、memory:get と同じく消す。
+ipcMain.handle("memory:rekey", async (event, newPassword) => {
+  if (EXHIBIT_MODE) return true; // 展示モードでは鍵を作っていない
+  if (!memorySession || typeof newPassword !== "string" || newPassword === "") return false;
+
+  const current = memorySession;
+  const salt = newSalt();
+  const key  = await deriveMemoryKey(newPassword, salt);
+  // 鍵を作っているあいだにログアウトした（別の社員になった）なら、何もしない
+  if (memorySession !== current) return false;
+
+  // 記憶は、鍵を作り終えてから読む（そのあいだに memory:set で保存された分も、付け替えに含めるため）
+  const record = unwrapValue(store.get(current.storeKey));
+  if (record !== undefined) {
+    try {
+      store.set(current.storeKey, wrapValue(reencryptMemory(current.key, record, key, salt)));
+    } catch (err) {
+      console.warn("[Memory] 記憶を付け替えられなかったため、消します:", err.message);
+      store.delete(current.storeKey);
+    }
+  }
+  memorySession = { storeKey: current.storeKey, key, salt };
+  return true;
+});
+
+// 展示モードか（画面側で、パスワードの変更欄を隠すのに使う）
+ipcMain.handle("app:isExhibit", () => EXHIBIT_MODE);
 
 // ログインしたばかりか。チャット画面がログイン時のあいさつを出すときに1回だけ使う
 // （管理者画面から戻ってチャット画面を開き直したときに、あいさつを繰り返さないため）

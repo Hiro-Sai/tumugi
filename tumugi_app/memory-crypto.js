@@ -5,6 +5,7 @@
 //   - deriveMemoryKey(password, salt)  … パスワードとソルトから鍵（32バイト）を作る（scrypt）
 //   - encryptMemory(key, salt, memory) … 記憶（オブジェクト）を暗号化し、保存用のレコードにする（AES-256-GCM）
 //   - decryptMemory(key, record)       … レコードを復号して記憶に戻す。鍵が違う・書き換えられていたら例外
+//   - reencryptMemory(oldKey, record, newKey, newSalt) … パスワードを変えたとき、記憶を新しい鍵で暗号化し直す
 // Electron に依存しない純粋な関数だけを置き、main.js とテスト（test/memory-crypto.test.js）から使う。
 //
 // 鍵はパスワードからしか作れないので、本人のパスワードがなければ、同じ Windows アカウントを使う同僚も、
@@ -60,4 +61,9 @@ function decryptMemory(key, record) {
   return JSON.parse(json);
 }
 
-module.exports = { newSalt, deriveMemoryKey, encryptMemory, decryptMemory };
+// 古い鍵で読めなければ（鍵が違う・書き換えられている）、decryptMemory と同じく例外
+function reencryptMemory(oldKey, record, newKey, newSaltValue) {
+  return encryptMemory(newKey, newSaltValue, decryptMemory(oldKey, record));
+}
+
+module.exports = { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory };

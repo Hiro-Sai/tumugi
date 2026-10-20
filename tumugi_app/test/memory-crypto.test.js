@@ -6,7 +6,7 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 
-const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory } = require("../memory-crypto");
+const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("../memory-crypto");
 
 const MEMORY = { "名前": "たろう", "最近の気分": "上司との関係で少し疲れている" };
 
@@ -62,4 +62,37 @@ test("同じパスワードでも、ソルトが違えば鍵も違う", async ()
 
   assert.equal(a.length, 32);
   assert.ok(!a.equals(b));
+});
+
+// -----------------------------------------
+// パスワードを変えたときの、記憶の鍵の付け替え
+// -----------------------------------------
+async function oldAndNew() {
+  const oldSalt = newSalt();
+  const oldKey  = await deriveMemoryKey("old-pass-1", oldSalt);
+  const newSaltValue = newSalt();
+  const newKey  = await deriveMemoryKey("new-pass-2", newSaltValue);
+  return { oldSalt, oldKey, newSaltValue, newKey, record: encryptMemory(oldKey, oldSalt, MEMORY) };
+}
+
+test("付け替えたレコードは、新しい鍵で読めて、中身は同じ", async () => {
+  const { oldKey, newSaltValue, newKey, record } = await oldAndNew();
+  const moved = reencryptMemory(oldKey, record, newKey, newSaltValue);
+
+  assert.equal(moved.salt, newSaltValue);
+  assert.deepEqual(decryptMemory(newKey, moved), MEMORY);
+});
+
+test("付け替えたレコードは、古い鍵では読めない", async () => {
+  const { oldKey, newSaltValue, newKey, record } = await oldAndNew();
+  const moved = reencryptMemory(oldKey, record, newKey, newSaltValue);
+
+  assert.throws(() => decryptMemory(oldKey, moved));
+});
+
+test("違う鍵を古い鍵として渡すと、例外になる", async () => {
+  const { oldSalt, newSaltValue, newKey, record } = await oldAndNew();
+  const wrongKey = await deriveMemoryKey("wrong-pass", oldSalt);
+
+  assert.throws(() => reencryptMemory(wrongKey, record, newKey, newSaltValue));
 });

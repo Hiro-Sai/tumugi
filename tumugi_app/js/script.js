@@ -1086,7 +1086,7 @@ function resetAllMemory() {
 }
 
 // =========================
-// 設定モーダル（感情ログ同意の確認・撤回のみ）
+// 設定モーダル（感情ログ同意の確認・撤回と、パスワードの変更）
 //
 // 以前はここでプロンプト・AIモデルの編集UIも扱っていたが、企業向け展開に伴い
 // 一般社員向けUIからは廃止した。renderPresetList()・checkModelAvailability()等、
@@ -1094,8 +1094,16 @@ function resetAllMemory() {
 // HTML要素がindex.html側にないため、現状呼び出されることはない
 // （運用者が配布前に別途対応する想定）。
 // =========================
-function openPromptModal() {
+async function openPromptModal() {
   refreshConsentSettingUI();
+  // 展示モードでは、パスワードの変更欄を出さない（来場者が共用のアカウントのパスワードを変えられないように）
+  const passwordBlock = document.getElementById("passwordSettingBlock");
+  if (passwordBlock) {
+    const exhibit = await window.electronAPI.isExhibitMode().catch(() => true);
+    passwordBlock.style.display = exhibit ? "none" : "";
+  }
+  clearPasswordInputs();
+  showPasswordChangeResult("");
   const modal = document.getElementById("promptModal");
   if (modal) modal.style.display = "flex";
 }
@@ -1103,6 +1111,88 @@ function openPromptModal() {
 function closePromptModal() {
   const modal = document.getElementById("promptModal");
   if (modal) modal.style.display = "none";
+}
+
+// =========================
+// パスワードの変更（change_password.php）
+// サーバーで変わったあとに、記憶の鍵を付け替える（逆にすると、サーバーで失敗したときに記憶が読めなくなる）。
+// 今のパスワードを間違えたときは 403 が返るので、ログアウトしない（401 のときだけログアウトする）。
+// =========================
+const PASSWORD_INPUT_IDS = ["currentPasswordInput", "newPasswordInput", "confirmPasswordInput"];
+
+function clearPasswordInputs() {
+  for (const id of PASSWORD_INPUT_IDS) {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
+  }
+}
+
+// kind："ok"（緑）・"ng"（赤）・省略（ふつうの色）
+function showPasswordChangeResult(message, kind) {
+  const resultEl = document.getElementById("passwordChangeResult");
+  if (!resultEl) return;
+  resultEl.textContent = message;
+  resultEl.className = kind ? `model-check-result ${kind}` : "model-check-result";
+}
+
+async function changePassword() {
+  const [current, next, again] = PASSWORD_INPUT_IDS.map(id => document.getElementById(id)?.value ?? "");
+
+  const check = TumugiPassword.validateNewPassword({ current, next, confirm: again });
+  if (!check.ok) {
+    showPasswordChangeResult(check.message, "ng");
+    return;
+  }
+
+  // 二重に送らないよう、最初の await より前にボタンを押せなくする
+  const btn = document.getElementById("passwordChangeBtn");
+  if (btn) btn.disabled = true;
+  showPasswordChangeResult("");
+
+  try {
+    const token = await getStoredToken();
+    if (!token) {
+      await logout();
+      return;
+    }
+
+    const res = await window.electronAPI.netServer({
+      path: "/change_password.php",
+      method: "POST",
+      body: { current_password: current, new_password: next },
+      token,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        await logout();
+        return;
+      }
+      showPasswordChangeResult(
+        res.reason === "connection_refused"
+          ? "サーバーに接続できませんでした"
+          : (res.data?.error || "パスワードを変更できませんでした"),
+        "ng"
+      );
+      return;
+    }
+
+    let rekeyed = false;
+    try {
+      rekeyed = await window.electronAPI.memoryRekey(next);
+    } catch (e) {
+      console.warn("[Memory] 記憶の鍵を付け替えられませんでした:", e.message);
+    }
+
+    clearPasswordInputs();
+    if (rekeyed) {
+      showPasswordChangeResult("変更しました。ほかの PC でのログインは切れました", "ok");
+    } else {
+      showPasswordChangeResult("パスワードは変更しました。記憶の付け替えに失敗したため、次のログインで記憶が消えることがあります", "ng");
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function setModelQuick(modelName) {
@@ -1457,6 +1547,7 @@ const CLICK_HANDLERS = {
   memoryResetNoBtn: () => showResetConfirm(false),
   privacyCloseBtn:  closePromptModal,
   consentToggleBtn: toggleEmotionConsent,
+  passwordChangeBtn: changePassword,
   creditCloseBtn:   closeCreditModal,
   noticeAgreeBtn:   () => handleNoticeConsent(true),
   noticeDeclineBtn: () => handleNoticeConsent(false),
