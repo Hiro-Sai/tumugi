@@ -1,0 +1,111 @@
+# =========================================
+# つむぎ サーバー構成
+#   起動:                     docker compose up -d
+#   phpMyAdmin も使う:        docker compose --profile tools up -d
+#   デモ前にログを作り直す:   docker compose run --rm seed --refresh
+#   停止:                     docker compose --profile tools down
+#   完全な初期化（DBを消す）: docker compose --profile tools down -v
+#   （--profile tools を付けるのは phpMyAdmin も片付けるため。付けないと古い phpMyAdmin が残り、
+#     DB を作り直したあとに phpMyAdmin を起動すると「network ... not found」で失敗する）
+# 待ち受けは 127.0.0.1 だけ。DB はインターネットに出られない内部ネットワークに置く。
+# =========================================
+
+# フォルダ名（つむぎプロジェクト）からは有効なプロジェクト名を作れないため明示する
+name: tumugi
+
+# ${変数:?メッセージ} は、.env に値がないときに起動前にエラーで止めるための書き方
+x-app-env: &app-env
+  DB_HOST: db
+  DB_NAME: ${DB_NAME:?.env がありません。.env.example をコピーして作ってください}
+  DB_USER: ${DB_USER:?.env がありません。.env.example をコピーして作ってください}
+  DB_PASS: ${DB_PASS:?.env がありません。.env.example をコピーして作ってください}
+  TZ: Asia/Tokyo
+
+services:
+  db:
+    image: mysql:8.4
+    command: ["--default-time-zone=+09:00"]
+    # Docker Desktop の再起動後や異常終了したときに、自動で起動し直す（自分で止めたときは起動しない）
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:?.env がありません。.env.example をコピーして作ってください}
+      MYSQL_USER: ${DB_USER:?.env がありません。.env.example をコピーして作ってください}
+      MYSQL_PASSWORD: ${DB_PASS:?.env がありません。.env.example をコピーして作ってください}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:?.env がありません。.env.example をコピーして作ってください}
+      TZ: Asia/Tokyo
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./tumugi_server/sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      # 初期化中の一時サーバーは TCP を受け付けないため、127.0.0.1（TCP）で確認する。
+      # localhost（ソケット）で確認すると、初期化が終わる前に healthy になってしまう。
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    # ports は書かない（DB はコンテナ同士の通信だけで使い、外部に公開しない）
+    # backend だけにつなぐ（インターネットに出られない）
+    networks: [backend]
+
+  app:
+    build: ./docker/app
+    # db と同じく、Docker Desktop の再起動後や異常終了したときに自動で起動し直す
+    restart: unless-stopped
+    environment: *app-env
+    volumes:
+      - ./tumugi_server:/var/www/tumugi:ro
+    ports:
+      - "127.0.0.1:8080:80"
+    # backend は db への接続用、frontend はポート公開用
+    networks: [backend, frontend]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # デモデータ投入（起動のたびに1回実行して終了する。DEMO_SEED=false なら何もしない）
+  seed:
+    build: ./docker/app
+    environment:
+      <<: *app-env
+      # .env に書かれていなければ、false（何もしない）・空として扱う
+      DEMO_SEED: ${DEMO_SEED:-false}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+    volumes:
+      - ./tumugi_server:/var/www/tumugi:ro
+    # command ではなく entrypoint にする。command だと、docker compose run --rm seed --refresh の
+    # --refresh が実行するコマンドごと置き換えてしまい、このスクリプトが実行されないため。
+    entrypoint: ["php", "/var/www/tumugi/tools/seed_demo.php"]
+    restart: "no"
+    # db に接続できればよいので backend だけにつなぐ（インターネットに出られない）
+    networks: [backend]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    profiles: ["tools"]
+    environment:
+      PMA_HOST: db
+      TZ: Asia/Tokyo
+    volumes:
+      # 更新確認・エラー報告など、外部への問い合わせを止める設定
+      - ./docker/phpmyadmin/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro
+    ports:
+      - "127.0.0.1:8081:80"
+    # backend は db への接続用、frontend はポート公開用
+    networks: [backend, frontend]
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  # DB 用の内部ネットワーク。internal: true のため、ここだけにつながるコンテナはインターネットに出られない
+  backend:
+    internal: true
+  # ポート公開（127.0.0.1 のみ）用。app と phpmyadmin だけがつながる
+  frontend: {}
+
+volumes:
+  db-data:

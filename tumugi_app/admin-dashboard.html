@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- 読み込めるものをアプリのフォルダの中だけに制限する（画面側からの通信はすべて禁止） -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>つむぎ 管理者ダッシュボード</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .admin-wrap {
+      position: relative;
+      z-index: 1;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 32px 40px 60px;
+    }
+    .admin-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .admin-title {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--amber-pale);
+      letter-spacing: 0.1em;
+      text-shadow: 0 0 20px rgba(232,176,106,0.3);
+    }
+    .admin-back-btn {
+      background: none;
+      border: 1px solid rgba(237,224,200,0.15);
+      color: var(--cream-dim);
+      font-family: var(--font-jp);
+      font-size: 12px;
+      padding: 8px 18px;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      transition: var(--transition);
+      opacity: 0.7;
+    }
+    .admin-back-btn:hover { opacity: 1; background: rgba(237,224,200,0.08); }
+
+    .admin-note {
+      font-size: 12px;
+      color: var(--cream-dim);
+      opacity: 0.8;
+      font-family: var(--font-jp);
+      line-height: 1.8;
+      padding: 14px 18px;
+      border: 1px solid var(--divider);
+      border-radius: var(--radius-sm);
+      background: rgba(43,32,24,0.025);
+      margin-bottom: 20px;
+    }
+
+    .admin-card {
+      background: #FFFFFF;
+      border: 1px solid var(--divider);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 14px rgba(43,32,24,0.05);
+    }
+
+    .admin-card-title {
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      color: var(--amber-dim);
+      opacity: 0.8;
+      font-family: var(--font-jp);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+    }
+
+    #chartCanvas, #harassmentChartCanvas {
+      width: 100%;
+      height: 260px;
+      display: block;
+    }
+
+    .chart-legend {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-top: 10px;
+      font-size: 11px;
+      font-family: var(--font-jp);
+      color: var(--cream-dim);
+      opacity: 0.75;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .legend-dot-dept    { background: linear-gradient(135deg, var(--amber-glow), var(--amber-dim)); }
+    .legend-dot-newgrad { background: linear-gradient(135deg, #5a9bd4, #3f6f99); }
+
+    .new-grad-badge {
+      display: inline-block;
+      font-size: 9.5px;
+      padding: 1px 7px;
+      border-radius: var(--radius-full);
+      background: rgba(63,111,153,0.12);
+      color: #3F6F99;
+      margin-left: 6px;
+      letter-spacing: 0.03em;
+    }
+
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-jp);
+      font-size: 12.5px;
+    }
+    .admin-table th, .admin-table td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--divider);
+    }
+    .admin-table th {
+      color: var(--amber-dim);
+      font-weight: 400;
+      letter-spacing: 0.06em;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+    .admin-table td { color: var(--cream); }
+    .admin-table .crisis-cell { color: #B23A2A; font-weight: 500; }
+
+    .admin-loading, .admin-error {
+      text-align: center;
+      color: var(--cream-dim);
+      opacity: 0.7;
+      font-family: var(--font-jp);
+      font-size: 12.5px;
+      padding: 40px 0;
+    }
+    .admin-error { color: #B23A2A; opacity: 0.9; }
+
+    .harassment-flag-note {
+      font-size: 12px;
+      color: #A8631E;
+      font-family: var(--font-jp);
+      line-height: 1.7;
+      padding: 10px 14px;
+      border: 1px solid rgba(168,99,30,0.25);
+      border-radius: var(--radius-sm);
+      background: rgba(168,99,30,0.06);
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="bg-overlay"></div>
+  <div class="bg-vignette"></div>
+  <div class="bg-noise"></div>
+
+  <div class="admin-wrap">
+    <div class="admin-header">
+      <span class="admin-title">管理者ダッシュボード</span>
+      <button id="adminBackBtn" class="admin-back-btn">← チャットに戻る</button>
+    </div>
+
+    <div id="adminContent">
+      <p class="admin-loading">読み込み中…</p>
+    </div>
+  </div>
+
+  <script src="js/utils.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/admin-dashboard.js"></script>
+</body>
+</html>

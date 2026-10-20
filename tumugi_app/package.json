@@ -1,0 +1,101 @@
+{
+  "name": "tumugi",
+  "version": "1.0.0",
+  "description": "共感AIつむぎ — デスクトップアプリ",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "build-win": "electron-builder --win",
+    "build-mac": "electron-builder --mac",
+    "build": "electron-builder --win --mac"
+  },
+  "build": {
+    "appId": "com.tumugi.app",
+    "productName": "つむぎ",
+    "copyright": "Copyright © 2025",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "net-policy.js",
+      "memory-crypto.js",
+      "index.html",
+      "login.html",
+      "admin-demo.html",
+      "admin-dashboard.html",
+      "js/**",
+      "css/**",
+      "images/**",
+      "!**/node_modules/**",
+      "!**/.git/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "images/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "つむぎ",
+      "installerLanguages": [
+        "ja"
+      ],
+      "language": "1041"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "images/icon.icns",
+      "category": "public.app-category.social-networking",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "つむぎ インストーラー",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/noto-sans-jp": "^5.3.0",
+    "@fontsource/zen-old-mincho": "^5.3.0",
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6",
+    "electron-builder": "^24.0.0"
+  }
+}

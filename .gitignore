@@ -1,0 +1,20 @@
+# ===== 依存パッケージ・ビルド成果物 =====
+node_modules/
+dist/
+
+# ===== 秘密情報（.env は絶対にコミットしない） =====
+.env
+!.env.example
+
+# ===== キャラクター立ち絵（利用規約の確認が済むまで管理対象外） =====
+# images の PNG はすべて立ち絵（元の絵・まばたき・口パク用と、使っていない描き分け）。アイコンは .ico なので対象外
+tumugi_app/images/*.png
+
+# ===== 手動バックアップ =====
+tumugi_app.zip
+tumugi_backup_*/
+
+# ===== OS =====
+Thumbs.db
+desktop.ini
+.DS_Store

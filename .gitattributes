@@ -1,0 +1,20 @@
+# =========================================
+# 改行コードを LF に統一する。
+# Windows で clone しても CRLF にならないようにする
+# （コンテナ内で使うシェルスクリプトなどが CRLF だと動かないため）。
+# =========================================
+* text=auto eol=lf
+
+# Windows 専用のスクリプトは CRLF のまま
+*.bat eol=crlf
+*.cmd eol=crlf
+*.ps1 eol=crlf
+
+# 画像は変換しない
+*.png binary
+*.jpg binary
+*.ico binary
+
+# 公開用に写すとき（git archive）に入れないもの：実装の計画（長い手順書なので、開発ログと設計書だけを公開する）
+docs/superpowers/plans export-ignore
+docs/superpowers/plans/** export-ignore

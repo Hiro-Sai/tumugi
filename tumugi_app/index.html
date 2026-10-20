@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- 読み込めるものをアプリのフォルダの中だけに制限する（画面側からの通信はすべて禁止） -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>共感AIつむぎ</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div class="bg-overlay"></div>
+  <div class="bg-vignette"></div>
+  <div class="bg-noise"></div>
+
+  <div class="particles" aria-hidden="true">
+    <span></span><span></span><span></span>
+    <span></span><span></span><span></span>
+  </div>
+
+  <div class="layout">
+
+    <!-- 左ペイン：アバター固定 -->
+    <aside class="sidebar">
+      <div class="sidebar-inner">
+
+        <div class="title-block">
+          <p class="title-sub">empathy AI</p>
+          <h1>つむぎ</h1>
+          <div class="title-divider"></div>
+        </div>
+
+        <div class="avatar-wrap">
+          <div class="avatar-glow"></div>
+          <img id="avatar" src="images/normal_open.png" alt="つむぎ">
+        </div>
+
+        <!-- 管理者ダッシュボードへ（is_adminでない場合はJS側で非表示にする） -->
+        <button id="adminNavBtn" class="memory-btn">
+          <span>📊</span>
+          <span>管理者</span>
+        </button>
+
+        <!-- 記憶管理ボタン -->
+        <button id="memoryBtn" class="memory-btn">
+          <span>🧠</span>
+          <span>記憶</span>
+        </button>
+
+        <!-- プライバシー設定ボタン（感情ログ同意の確認・撤回のみ。プロンプト・モデル編集UIは
+             企業向け展開に伴い一般社員向けUIから廃止済み。仕組み自体は
+             script.js内に残しており、配布前に運用者が設定する想定） -->
+        <button id="privacyBtn" class="memory-btn">
+          <span>🔒</span>
+          <span>プライバシー設定</span>
+        </button>
+
+        <!-- ログアウト -->
+        <button id="logoutBtn" class="memory-btn">
+          <span>🚪</span>
+          <span>ログアウト</span>
+        </button>
+
+        <!-- クレジットボタン -->
+        <button id="creditBtn" class="memory-btn">
+          <span>©</span>
+          <span>クレジット</span>
+        </button>
+
+      </div>
+    </aside>
+
+    <!-- 右ペイン：チャット -->
+    <main class="chat-pane">
+      <div class="chat-header">
+        <span class="chat-header-dot"></span>
+        <span class="chat-header-dot"></span>
+        <span class="chat-header-dot"></span>
+        <span class="chat-header-title">conversation</span>
+      </div>
+      <div id="chatArea"></div>
+
+      <!-- テキスト入力（企業向け展開に伴い、音声入力は廃止しテキストのみに一本化） -->
+      <div class="text-input-bar">
+        <input
+          type="text"
+          id="textInput"
+          class="text-input"
+          placeholder="テキストで話しかける…"
+          autocomplete="off"
+        >
+        <button id="sendBtn" class="send-btn">
+          <span class="send-icon">↑</span>
+        </button>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- 記憶管理モーダル -->
+  <div id="memoryModal" class="memory-modal" style="display:none;">
+    <div class="memory-card">
+      <div class="memory-header">
+        <h3 class="memory-title">つむぎの記憶</h3>
+        <button id="memoryCloseBtn" class="memory-close">✕</button>
+      </div>
+      <div id="memoryList" class="memory-list">
+        <!-- JS で生成 -->
+      </div>
+      <div class="memory-footer">
+        <button id="memoryResetBtn" class="memory-reset-btn">全部忘れる</button>
+        <!-- 「全部忘れる」の確認。confirm() は使わない（Windows の Electron では、閉じたあと入力欄に文字が入らなくなるため） -->
+        <div id="memoryResetConfirm" class="memory-reset-confirm" style="display:none;">
+          <span class="memory-reset-question">記憶を全部消してもいい？</span>
+          <button id="memoryResetYesBtn" class="memory-reset-btn">消す</button>
+          <button id="memoryResetNoBtn" class="memory-reset-cancel-btn">やめる</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定モーダル（感情ログ同意の確認・撤回のみ） -->
+  <div id="promptModal" class="memory-modal" style="display:none;">
+    <div class="memory-card">
+      <div class="memory-header">
+        <h3 class="memory-title">プライバシー設定</h3>
+        <button id="privacyCloseBtn" class="memory-close">✕</button>
+      </div>
+
+      <div style="padding:20px 24px 24px;">
+        <!-- 感情ログ送信の同意設定 -->
+        <div id="consentSettingBlock">
+          <label class="prompt-label">感情ログの送信について</label>
+          <p id="consentStatusText" class="model-check-result"></p>
+          <button class="model-check-btn" id="consentToggleBtn">切り替える</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- クレジットモーダル -->
+  <div id="creditModal" class="memory-modal" style="display:none;">
+    <div class="memory-card credit-card">
+      <div class="memory-header">
+        <h3 class="memory-title">クレジット</h3>
+        <button id="creditCloseBtn" class="memory-close">✕</button>
+      </div>
+
+      <div class="credit-body">
+
+        <div class="credit-app-block">
+          <p class="credit-app-name">共感AI つむぎ</p>
+          <p class="credit-app-version" id="creditVersion">Version 1.0.0</p>
+          <p class="credit-app-copy">© 2025 つむぎ製作委員会</p>
+        </div>
+
+        <div class="credit-section-title">使用ソフトウェア・モデル</div>
+
+        <div class="credit-list">
+
+          <div class="credit-item">
+            <div class="credit-name">VOICEVOX <span class="credit-version-badge">音声合成エンジン</span></div>
+            <div class="credit-detail">© Hiroshiba Kazuyuki</div>
+            <div class="credit-note">本ソフトウェアはVOICEVOXを使用しています。</div>
+            <span class="credit-url">https://voicevox.hiroshiba.jp</span>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">春日部つむぎ <span class="credit-version-badge">音声キャラクター</span></div>
+            <div class="credit-detail">VOICEVOX:春日部つむぎ</div>
+            <div class="credit-note">本ソフトウェアは「春日部つむぎ」の音声を使用しています。VOICEVOX利用規約に基づき使用しています。</div>
+            <span class="credit-url">https://voicevox.hiroshiba.jp/term</span>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">Gemma 4 <span class="credit-version-badge">言語モデル</span></div>
+            <div class="credit-detail">© Google DeepMind — Apache License 2.0</div>
+            <div class="credit-note">本ソフトウェアはGoogle DeepMindが提供するGemma 4（E4B）をOllama経由で使用しています。</div>
+            <span class="credit-url">https://ai.google.dev/gemma</span>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">Ollama <span class="credit-version-badge">LLMランタイム</span></div>
+            <div class="credit-detail">© Ollama, Inc. — MIT License</div>
+            <div class="credit-note">本ソフトウェアはOllamaをLLM推論バックエンドとして使用しています。</div>
+            <span class="credit-url">https://ollama.com</span>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">Electron <span class="credit-version-badge">デスクトップフレームワーク</span></div>
+            <div class="credit-detail">© OpenJS Foundation — MIT License</div>
+            <span class="credit-url">https://www.electronjs.org</span>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">Zen Old Mincho <span class="credit-version-badge">フォント</span></div>
+            <div class="credit-detail">Copyright 2021 The Zen Old Mincho Project Authors (https://github.com/googlefonts/zen-oldmincho) — SIL Open Font License 1.1</div>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">DM Sans <span class="credit-version-badge">フォント</span></div>
+            <div class="credit-detail">Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts) — SIL Open Font License 1.1</div>
+          </div>
+
+          <div class="credit-item">
+            <div class="credit-name">Noto Sans JP <span class="credit-version-badge">フォント</span></div>
+            <div class="credit-detail">(c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. — SIL Open Font License 1.1</div>
+          </div>
+
+        </div>
+
+        <div class="credit-license-note">
+          本ソフトウェアはオープンソースソフトウェアを使用しています。各ライセンスの全文はそれぞれの公式サイトをご参照ください。
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 注意事項モーダル（社員ごとに、まだ同意の意思決定をしていない場合のみ表示） -->
+  <div id="noticeModal" class="setup-modal" style="display:none;">
+    <div class="setup-card">
+      <p class="setup-sub">始める前に</p>
+      <h2 class="setup-title">ご注意</h2>
+      <div class="setup-desc" style="text-align:left; line-height:1.85; margin-bottom:14px;">
+        <p>🖥️ <strong>Ollama</strong>を起動してからご利用ください（VOICEVOXはアプリが自動で起動します）。</p>
+        <p>🔒 会話の<strong>発言内容そのもの</strong>は、このPCの中だけに保存されます。発言内容が外部やサーバーに送信されることはありません。</p>
+        <p>📊 <strong>ただし</strong>、会話ごとの感情カテゴリ（happy/sad等）、危機的な発言を検知したかどうかのフラグ、職場でのハラスメントに関する発言（受けた／言ってしまった）を検知したかどうかは、社内サーバーに送信され、あなたの社員IDに紐づいた形で記録されます。管理者は個人ごとの詳細は見られず、10名以上のグループ単位で集計された値のみを閲覧できます。</p>
+      </div>
+      <div class="setup-divider"></div>
+      <div class="setup-desc" style="text-align:left; line-height:1.75; margin-bottom:14px;">
+        <p>上記の感情ログ（危機検知・ハラスメント検知を含む）の送信に同意しますか？<br>同意しない場合でもチャット機能は通常通り利用できます。ただし危機的な発言を検知した際にその場でホットライン等の案内をお伝えする対応は、この同意の有無に関わらず必ず行われます（案内表示はローカルの挙動で、サーバーへの送信とは別のものです）。この設定は後から「設定」画面でいつでも変更できます。</p>
+      </div>
+      <button id="noticeAgreeBtn" class="setup-btn">同意する</button>
+      <button id="noticeDeclineBtn" class="setup-btn" style="background:none; border:1px solid rgba(43,32,24,0.18); color:var(--cream-dim); box-shadow:none; margin-top:6px;">同意しない（ログ送信を無効化）</button>
+    </div>
+  </div>
+
+  <!-- 初回セットアップモーダル -->
+  <div id="setupModal" class="setup-modal" style="display:none;">
+    <div class="setup-card">
+      <p class="setup-sub">はじめまして</p>
+      <h2 class="setup-title">つむぎです</h2>
+      <p class="setup-desc">少しだけ教えてくれると、もっと仲良くなれるかも〜</p>
+      <div class="setup-fields">
+        <div class="setup-field">
+          <label class="setup-label">名前</label>
+          <input type="text" id="setupName" class="setup-input" placeholder="たろう">
+        </div>
+        <div class="setup-field">
+          <label class="setup-label">年齢</label>
+          <input type="text" id="setupAge" class="setup-input" placeholder="22">
+        </div>
+        <div class="setup-field">
+          <label class="setup-label">趣味・好きなこと</label>
+          <input type="text" id="setupHobby" class="setup-input" placeholder="音楽、映画…">
+        </div>
+        <div class="setup-field">
+          <label class="setup-label">最近の気分</label>
+          <input type="text" id="setupMood" class="setup-input" placeholder="ちょっと疲れ気味…">
+        </div>
+      </div>
+      <button id="setupSubmitBtn" class="setup-btn">話しかける</button>
+      <button id="setupSkipBtn" class="setup-skip">後で</button>
+    </div>
+  </div>
+
+  <!-- utils.js → auth.js → safety.js → prompt.js → lipsync.js → script.js の順で読み込む -->
+ <script src="js/utils.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/safety.js"></script>
+  <script src="js/prompt.js"></script>
+  <script src="js/lipsync.js"></script>
+  <script src="js/script.js"></script>
+</body>
+</html>
