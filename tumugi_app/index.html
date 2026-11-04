@@ -169,69 +169,37 @@
 
       <div class="credit-body">
 
-        <div class="credit-app-block">
-          <p class="credit-app-name">共感AI つむぎ</p>
-          <p class="credit-app-version" id="creditVersion">Version 1.0.0</p>
-          <p class="credit-app-copy">© 2025 つむぎ製作委員会</p>
+        <!-- 声と立ち絵の作者は、必ず載せる決まりのクレジットなので、絵と一緒にいちばん上に出す -->
+        <div class="credit-hero">
+          <img class="credit-hero-img" src="images/normal_open.png" alt="つむぎの立ち絵">
+          <div>
+            <p class="credit-app-name">共感AI つむぎ</p>
+            <p class="credit-hero-line"><span class="credit-hero-label">声</span>VOICEVOX:春日部つむぎ</p>
+            <p class="credit-hero-line"><span class="credit-hero-label">立ち絵</span>坂本アヒル<span class="credit-hero-sub">春日部つむぎ立ち絵素材</span></p>
+            <p class="credit-app-meta">Version 1.0.0　© 2026 Hiro-Sai</p>
+          </div>
         </div>
 
-        <div class="credit-section-title">使用ソフトウェア・モデル</div>
+        <p class="credit-disclaimer">春日部つむぎ公式とは関係のない、個人の作品です。</p>
 
-        <div class="credit-list">
+        <div class="credit-section-title">使っているソフト</div>
+        <dl class="credit-list">
+          <dt class="credit-name">VOICEVOX</dt>       <dd class="credit-detail">© Hiroshiba Kazuyuki</dd>
+          <dt class="credit-name">Gemma 4（E4B）</dt> <dd class="credit-detail">© Google DeepMind・Apache License 2.0</dd>
+          <dt class="credit-name">Ollama</dt>         <dd class="credit-detail">© Ollama, Inc.・MIT License</dd>
+          <dt class="credit-name">Electron</dt>       <dd class="credit-detail">© OpenJS Foundation・MIT License</dd>
+          <dt class="credit-name">electron-store</dt> <dd class="credit-detail">© Sindre Sorhus・MIT License</dd>
+        </dl>
 
-          <div class="credit-item">
-            <div class="credit-name">VOICEVOX <span class="credit-version-badge">音声合成エンジン</span></div>
-            <div class="credit-detail">© Hiroshiba Kazuyuki</div>
-            <div class="credit-note">本ソフトウェアはVOICEVOXを使用しています。</div>
-            <span class="credit-url">https://voicevox.hiroshiba.jp</span>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">春日部つむぎ <span class="credit-version-badge">音声キャラクター</span></div>
-            <div class="credit-detail">VOICEVOX:春日部つむぎ</div>
-            <div class="credit-note">本ソフトウェアは「春日部つむぎ」の音声を使用しています。VOICEVOX利用規約に基づき使用しています。</div>
-            <span class="credit-url">https://voicevox.hiroshiba.jp/term</span>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">Gemma 4 <span class="credit-version-badge">言語モデル</span></div>
-            <div class="credit-detail">© Google DeepMind — Apache License 2.0</div>
-            <div class="credit-note">本ソフトウェアはGoogle DeepMindが提供するGemma 4（E4B）をOllama経由で使用しています。</div>
-            <span class="credit-url">https://ai.google.dev/gemma</span>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">Ollama <span class="credit-version-badge">LLMランタイム</span></div>
-            <div class="credit-detail">© Ollama, Inc. — MIT License</div>
-            <div class="credit-note">本ソフトウェアはOllamaをLLM推論バックエンドとして使用しています。</div>
-            <span class="credit-url">https://ollama.com</span>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">Electron <span class="credit-version-badge">デスクトップフレームワーク</span></div>
-            <div class="credit-detail">© OpenJS Foundation — MIT License</div>
-            <span class="credit-url">https://www.electronjs.org</span>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">Zen Old Mincho <span class="credit-version-badge">フォント</span></div>
-            <div class="credit-detail">Copyright 2021 The Zen Old Mincho Project Authors (https://github.com/googlefonts/zen-oldmincho) — SIL Open Font License 1.1</div>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">DM Sans <span class="credit-version-badge">フォント</span></div>
-            <div class="credit-detail">Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts) — SIL Open Font License 1.1</div>
-          </div>
-
-          <div class="credit-item">
-            <div class="credit-name">Noto Sans JP <span class="credit-version-badge">フォント</span></div>
-            <div class="credit-detail">(c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. — SIL Open Font License 1.1</div>
-          </div>
-
-        </div>
+        <div class="credit-section-title">フォント（SIL Open Font License 1.1）</div>
+        <dl class="credit-list">
+          <dt class="credit-name">Zen Old Mincho</dt> <dd class="credit-detail">© 2021 The Zen Old Mincho Project Authors</dd>
+          <dt class="credit-name">DM Sans</dt>        <dd class="credit-detail">© 2014 The DM Sans Project Authors</dd>
+          <dt class="credit-name">Noto Sans JP</dt>   <dd class="credit-detail">© 2014-2021 Adobe</dd>
+        </dl>
 
         <div class="credit-license-note">
-          本ソフトウェアはオープンソースソフトウェアを使用しています。各ライセンスの全文はそれぞれの公式サイトをご参照ください。
+          ライセンスの全文は、それぞれの公式サイトにあります。
         </div>
 
       </div>

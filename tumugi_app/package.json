@@ -13,7 +13,7 @@
   "build": {
     "appId": "com.tumugi.app",
     "productName": "つむぎ",
-    "copyright": "Copyright © 2025",
+    "copyright": "Copyright © 2026 Hiro-Sai",
     "directories": {
       "output": "dist",
       "buildResources": "build"

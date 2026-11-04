@@ -258,6 +258,7 @@ Get-Content -Raw -Encoding utf8 tumugi_server/sql/migrations/2026-10-26-employee
 - Gemma 4（E4B）© Google DeepMind — Apache License 2.0
 - Ollama © Ollama, Inc. — MIT License
 - Electron © OpenJS Foundation — MIT License
+- electron-store © Sindre Sorhus — MIT License
 - Zen Old Mincho — Copyright 2021 The Zen Old Mincho Project Authors (https://github.com/googlefonts/zen-oldmincho) — SIL Open Font License 1.1
 - DM Sans — Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts) — SIL Open Font License 1.1
 - Noto Sans JP — (c) 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. — SIL Open Font License 1.1
