@@ -21,7 +21,8 @@ CREATE TABLE employees (
   created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   is_active      TINYINT(1)   NOT NULL DEFAULT 1,   -- 在籍フラグ
   is_new_grad    TINYINT(1)   NOT NULL DEFAULT 0,   -- 新卒フラグ（新卒集計に使う）
-  is_admin       TINYINT(1)   NOT NULL DEFAULT 0    -- 管理者フラグ（ダッシュボードを閲覧できる）
+  is_admin       TINYINT(1)   NOT NULL DEFAULT 0,   -- 管理者フラグ（ダッシュボードを閲覧できる）
+  must_change_password TINYINT(1) NOT NULL DEFAULT 0 -- 1：仮のパスワードのまま（変えるまでは、パスワードの変更とログアウト以外は使えない）
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- -----------------------------------------
@@ -41,6 +42,7 @@ CREATE TABLE emotion_logs (
 
 -- -----------------------------------------
 -- ログイン用トークン
+-- token 列には、トークンそのものではなく、その SHA-256（16進64文字）を入れる。
 -- -----------------------------------------
 CREATE TABLE auth_tokens (
   id           INT AUTO_INCREMENT PRIMARY KEY,
@@ -61,4 +63,19 @@ CREATE TABLE login_attempts (
   succeeded      TINYINT(1)  NOT NULL DEFAULT 0,
   attempted_at   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_employee_time (employee_code, succeeded, attempted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- -----------------------------------------
+-- 管理者の操作の記録（社員の管理）
+-- 社員を消しても記録が残るよう、外部キーにせず社員IDを文字で持つ。
+-- 仮のパスワードや、変えた値は入れない。
+-- -----------------------------------------
+CREATE TABLE admin_audit_logs (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  admin_code   VARCHAR(20)  NOT NULL,   -- 操作した管理者の社員ID
+  action       VARCHAR(20)  NOT NULL,   -- create / update / reset_password / deactivate / reactivate / delete
+  target_code  VARCHAR(20)  NOT NULL,   -- 対象の社員ID
+  detail       VARCHAR(255) NULL,       -- update のとき、変えた項目の名前（例：department,is_admin）。値は入れない
+  created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

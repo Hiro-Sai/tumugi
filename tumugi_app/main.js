@@ -5,6 +5,7 @@ const { spawn } = require("child_process");
 const Store = require("electron-store");
 const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaModel } = require("./net-policy");
 const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("./memory-crypto");
+const { STREAM_PIECE_CHANNEL, withRelayOptions, createLineSplitter } = require("./ollama-relay");
 
 const store = new Store();
 
@@ -22,11 +23,21 @@ const EXHIBIT_MODE = process.argv.includes("--exhibit");
 const EXHIBIT_KEEP_ALIVE = "60m";
 const CONSENT_MAP_KEY = "emotion_consent_map"; // js/script.js の CONSENT_MAP_KEY と同じ
 
+// =========================================
+// CPU だけで確かめる起動オプション（npm start -- --cpu-only）
+// GPU のない事務用 PC をまねて、このノート PC で動きを確かめるためのもの。
+//   - Ollama に送る会話に、options の num_gpu: 0（GPU を使わない）と num_thread: 4 を足す
+//     （足す中身は ollama-relay.js の CPU_ONLY_OPTIONS）
+// ふだんの起動（npm start）では行わない。展示モード（--exhibit）と一緒に付けてもよい。
+// =========================================
+const CPU_ONLY = process.argv.includes("--cpu-only");
+
 function clearConsentForExhibit() {
   if (EXHIBIT_MODE) store.delete(CONSENT_MAP_KEY);
 }
 
 let mainWindow = null;
+let adminWindow = null; // 管理者ダッシュボード（下の admin:open）
 
 // ログには URL 全体ではなく、スキームとホストだけを出す
 // （クエリに会話の内容などが含まれることがあるため）
@@ -39,39 +50,20 @@ function describeUrl(url) {
   }
 }
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1100,
-    height: 720,
-    minWidth: 800,
-    minHeight: 560,
-    title: "つむぎ",
-    icon: path.join(__dirname, "images", "icon.ico"),
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
-    backgroundColor: "#090704",
-    webPreferences: {
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      // 環境によっては辞書をネットから取りに行くため切る
-      spellcheck: false,
-      preload: path.join(__dirname, "preload.js"),
-    },
-  });
+// チャット・ダッシュボードのどちらのウィンドウも、この設定で作る
+const WEB_PREFERENCES = Object.freeze({
+  webSecurity: true,
+  allowRunningInsecureContent: false,
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  // 環境によっては辞書をネットから取りに行くため切る
+  spellcheck: false,
+  preload: path.join(__dirname, "preload.js"),
+});
 
-  mainWindow = win;
-
-  Menu.setApplicationMenu(null);
-  win.loadFile("login.html");
-
-  // ===== デバッグ用一時変更 =====
-  // メニューバーを消しているためCtrl+Shift+Iのショートカットが効かない。
-  // 調査が終わったら、このwin.webContents.openDevTools()の行は削除してよい。
-  //win.webContents.openDevTools();
-  // ===== ここまで =====
-
+// ウィンドウの守り（チャット・ダッシュボードの両方にかける）
+function hardenWindow(win) {
   // 外部の URL は開かない（新しいウィンドウも、既定のブラウザも）
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
@@ -82,11 +74,73 @@ function createWindow() {
       console.warn(`[net] アプリの外への画面移動を止めました: ${describeUrl(url)}`);
     }
   });
+}
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 720,
+    minWidth: 800,
+    minHeight: 560,
+    title: "つむぎ",
+    icon: path.join(__dirname, "images", "icon.ico"),
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    backgroundColor: "#090704",
+    webPreferences: { ...WEB_PREFERENCES },
+  });
+
+  mainWindow = win;
+
+  Menu.setApplicationMenu(null);
+  win.loadFile("login.html");
+
+  // ===== デバッグ用一時変更 =====
+  // メニューバーを消しているためCtrl+Shift+Iのショートカットが効かない。
+  // 確かめるときだけ、次の行のコメントを外す（README の「CPU だけの PC をまねて確かめるとき」）。消さずに残しておく。
+  //win.webContents.openDevTools();
+  // ===== ここまで =====
+
+  hardenWindow(win);
 
   win.on("closed", () => {
     mainWindow = null;
   });
 }
+
+// =========================================
+// 管理者ダッシュボードのウィンドウ
+// チャットとは別のウィンドウで開く。同じウィンドウでページを移ると、チャットの画面が作り直されて会話が消えるため。
+// チャットの上にモーダルで重ね、閉じるまでチャットは操作できない。閉じるのは「チャットに戻る」か ×。
+// ダッシュボードを見せてよいかは、dashboard_data.php が DB で確かめる（ここは開くだけ）。
+// =========================================
+ipcMain.on("admin:open", (event) => {
+  // チャットの画面から送られたときだけ開く
+  if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  if (adminWindow) {
+    adminWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    ...mainWindow.getBounds(), // チャットの画面にちょうど重ねる
+    parent: mainWindow,
+    modal: true,
+    minWidth: 800,
+    minHeight: 560,
+    title: "つむぎ",
+    icon: path.join(__dirname, "images", "icon.ico"),
+    backgroundColor: "#090704",
+    webPreferences: { ...WEB_PREFERENCES },
+  });
+
+  adminWindow = win;
+  hardenWindow(win);
+  win.loadFile("admin-dashboard.html");
+
+  win.on("closed", () => {
+    if (adminWindow === win) adminWindow = null;
+  });
+});
 
 // =========================================
 // 画面側（HTML）の通信と権限の制限
@@ -283,7 +337,7 @@ ipcMain.handle("memory:rekey", async (event, newPassword) => {
 ipcMain.handle("app:isExhibit", () => EXHIBIT_MODE);
 
 // ログインしたばかりか。チャット画面がログイン時のあいさつを出すときに1回だけ使う
-// （管理者画面から戻ってチャット画面を開き直したときに、あいさつを繰り返さないため）
+// （チャット画面が読み込み直されても、あいさつを繰り返さないため）
 let greetingPending = false;
 
 ipcMain.on("auth:login-success", () => {
@@ -294,6 +348,8 @@ ipcMain.on("auth:logout", () => {
   memorySession = null; // 次にログインする社員が、前の社員の鍵（展示モードでは記憶）を使えないようにする
   greetingPending = false;
   clearConsentForExhibit();
+  // ダッシュボードを開いていれば閉じる（ダッシュボードの中で 401 になったときも、ここを通る）
+  if (adminWindow) adminWindow.close();
   if (mainWindow) mainWindow.loadFile("login.html");
 });
 
@@ -439,10 +495,7 @@ ipcMain.handle("net:ollamaRequest", async (event, { path: reqPath, method, body 
   if (!url) return rejectRelay("ollama", httpMethod, reqPath);
   // 会話（POST /api/chat）は、この PC の中で動くモデルにだけ送る
   if (httpMethod === "POST" && !isAllowedOllamaModel(body?.model)) return rejectModel(body?.model);
-  // 展示モードでは、モデルを長めに読み込んだままにする（Ollama の既定は5分）
-  const sendBody = EXHIBIT_MODE && httpMethod === "POST" && body && typeof body === "object"
-    ? { ...body, keep_alive: EXHIBIT_KEEP_ALIVE }
-    : body;
+  const sendBody = httpMethod === "POST" ? withChatOptions(body) : body;
   return safeFetch(url, {
     method: httpMethod,
     headers: sendBody !== undefined ? { "Content-Type": "application/json" } : {},
@@ -450,6 +503,107 @@ ipcMain.handle("net:ollamaRequest", async (event, { path: reqPath, method, body 
     responseType: "json",
   });
 });
+
+// 少しずつ受け取る版。返事（Ollama が1行ごとに返す JSON）が届くたびに、かけらを頼んだ画面にだけ送る。
+// 戻り値は net:ollamaRequest と同じ形で、成功のときは data.message.content に全文が入る。
+// 画面は requestId で、自分が頼んだ分のかけらだけを受け取る。
+// 会話の中身（body・かけら・全文）はログに出さない。
+const STREAM_REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+ipcMain.handle("net:ollamaStream", async (event, requestId, { path: reqPath, method, body } = {}) => {
+  const url = buildRelayUrl("ollama", reqPath, method);
+  if (typeof requestId !== "string" || !STREAM_REQUEST_ID.test(requestId) || method !== "POST" || !url) {
+    return rejectRelay("ollama", method, reqPath);
+  }
+  if (!isAllowedOllamaModel(body?.model)) return rejectModel(body?.model);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...withChatOptions(body), stream: true }),
+    });
+  } catch (err) {
+    return { ok: false, reason: "connection_refused", message: err.message };
+  }
+
+  if (!response.ok) return { ok: false, reason: "http_error", status: response.status };
+
+  return readOllamaStream(response, (piece) => {
+    if (!event.sender.isDestroyed()) event.sender.send(STREAM_PIECE_CHANNEL, requestId, piece);
+  });
+});
+
+// Ollama に送る会話に、main.js 側で決める設定を足す
+//   - 展示モードでは、モデルを長めに読み込んだままにする（Ollama の既定は5分）
+//   - --cpu-only のときは、CPU だけで動かす設定を足す
+function withChatOptions(body) {
+  return withRelayOptions(body, { keepAlive: EXHIBIT_MODE ? EXHIBIT_KEEP_ALIVE : null, cpuOnly: CPU_ONLY });
+}
+
+// Ollama の返事を最後まで読み、かけらが届くたびに onPiece に渡す。戻り値は safeFetch と同じ形。
+// 最後の行（done: true）を土台にして、message.content には届いたかけらをつないだ全文を入れる。
+async function readOllamaStream(response, onPiece) {
+  let content = "";
+  let lastLine = null;
+
+  // 1行を読む。読めない行・エラーの行なら失敗の戻り値を、そうでなければ null を返す
+  function readLine(line) {
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return { ok: false, reason: "invalid_json" };
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, reason: "invalid_json" };
+    }
+    if (parsed.error) return { ok: false, reason: "unknown", message: String(parsed.error) };
+
+    const piece = parsed.message?.content;
+    if (typeof piece === "string" && piece !== "") {
+      content += piece;
+      onPiece(piece);
+    }
+    if (parsed.done === true) lastLine = parsed;
+    return null;
+  }
+
+  let reader = null;
+  try {
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const splitter = createLineSplitter();
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      for (const line of splitter.push(decoder.decode(value, { stream: true }))) {
+        const failure = readLine(line);
+        if (failure) return failure;
+      }
+    }
+    // 読み終えたあとに残っている分
+    for (const line of [...splitter.push(decoder.decode()), ...splitter.flush()]) {
+      const failure = readLine(line);
+      if (failure) return failure;
+    }
+  } catch (err) {
+    return { ok: false, reason: "unknown", message: err.message };
+  } finally {
+    // 読み終えていれば何も起きない。途中で読むのをやめたときは、つなぎっぱなしにしない
+    if (reader) reader.cancel().catch(() => {});
+  }
+
+  // 最後の行（done: true）が届かなかったら、返事が途中で切れている
+  if (!lastLine) return { ok: false, reason: "unknown", message: "stream_ended_without_done" };
+  return {
+    ok: true,
+    status: response.status,
+    data: { ...lastLine, message: { role: "assistant", content } },
+  };
+}
 
 // =========================================
 // IPC: VOICEVOX への中継

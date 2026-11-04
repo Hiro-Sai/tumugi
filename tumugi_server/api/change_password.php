@@ -23,13 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$employeeId = verifyToken();
+// 仮のパスワードのままの社員も、ここだけは通す（パスワードを変えさせるため）
+$employeeId = verifyToken(true);
 if ($employeeId === null) {
     http_response_code(401);
     echo json_encode(['error' => '認証が必要です']);
     exit;
 }
-// verifyToken() が通ったので、トークンは必ずある
+// verifyToken(true) が通ったので、トークンは必ずある
 $currentToken = getBearerToken();
 
 $pdo = getDbConnection();
@@ -91,13 +92,16 @@ $newHash = password_hash($newPassword, PASSWORD_BCRYPT);
 // 途中で失敗したら（例外で止まると接続が閉じて）、どちらも元に戻る。
 $pdo->beginTransaction();
 
-$update = $pdo->prepare("UPDATE employees SET password_hash = :hash WHERE id = :id");
+// 仮のパスワードのままだった社員も、これで普通の状態に戻る（must_change_password = 0）
+$update = $pdo->prepare(
+    "UPDATE employees SET password_hash = :hash, must_change_password = 0 WHERE id = :id"
+);
 $update->execute(['hash' => $newHash, 'id' => $employeeId]);
 
 $revoke = $pdo->prepare(
     "DELETE FROM auth_tokens WHERE employee_id = :id AND token <> :current"
 );
-$revoke->execute(['id' => $employeeId, 'current' => $currentToken]);
+$revoke->execute(['id' => $employeeId, 'current' => hashToken($currentToken)]);
 $revoked = $revoke->rowCount();
 
 $pdo->commit();

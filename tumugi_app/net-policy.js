@@ -46,6 +46,13 @@ const ALLOWED_REQUESTS = Object.freeze({
     { method: "POST", path: "/save_emotion.php" },
     { method: "GET",  path: "/dashboard_data.php" },
     { method: "POST", path: "/change_password.php" },
+    { method: "POST", path: "/logout.php" },
+    { method: "GET",  path: "/admin_employees.php" },
+    { method: "POST", path: "/admin_employee_create.php" },
+    { method: "POST", path: "/admin_employee_update.php" },
+    { method: "POST", path: "/admin_employee_reset.php" },
+    { method: "POST", path: "/admin_employee_status.php" },
+    { method: "POST", path: "/admin_employee_delete.php" },
   ],
 });
 

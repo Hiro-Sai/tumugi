@@ -376,9 +376,50 @@ function drawHarassmentChart(countCats) {
 
 window.onload = loadDashboard;
 
-// 「チャットに戻る」ボタン（CSP で HTML の onclick が動かないため、ここで登録する）
+// -----------------------------------------
+// タブ（集計／社員）
+// 開いたときは「集計」。「社員」の中身は js/admin-employees.js が描く。
+// 「社員」を初めて開いたときに、一覧を読み込む。
+// 仮のパスワードの表示中・サーバーに送っている途中は、admin-employees.js が
+// 「集計」のタブを押せなくする（右の欄を替えさせないため）。ここでは何もしなくてよい。
+// -----------------------------------------
+let employeesTabOpened = false;
+
+function setTabState(buttonId, isOn) {
+  const button = document.getElementById(buttonId);
+  if (!button) return;
+  button.classList.toggle("on", isOn);
+  button.setAttribute("aria-selected", String(isOn));
+}
+
+function showTab(name) {
+  const showEmployees = name === "employees";
+  document.getElementById("adminContent").hidden = showEmployees;
+  document.getElementById("employeesPanel").hidden = !showEmployees;
+  setTabState("tabSummaryBtn", !showEmployees);
+  setTabState("tabEmployeesBtn", showEmployees);
+
+  if (showEmployees && !employeesTabOpened) {
+    employeesTabOpened = true;
+    loadEmployeesTab();
+  }
+}
+
+// 「チャットに戻る」ボタン・タブ（CSP で HTML の onclick が動かないため、ここで登録する）
+// ダッシュボードはチャットとは別のウィンドウなので、閉じればチャットに戻る（main.js の admin:open）
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("adminBackBtn")?.addEventListener("click", () => {
-    location.href = "index.html";
+    window.close();
   });
+
+  document.getElementById("tabSummaryBtn")?.addEventListener("click", () => showTab("summary"));
+  document.getElementById("tabEmployeesBtn")?.addEventListener("click", () => showTab("employees"));
+
+  // 展示モードでは「社員」タブを出さない（来場者が共用のアカウントで社員を消せないように）。
+  // 展示モードかどうか確かめられなかったときも出さない
+  window.electronAPI.isExhibitMode()
+    .catch(() => true)
+    .then((exhibit) => {
+      if (!exhibit) document.getElementById("tabEmployeesBtn").hidden = false;
+    });
 });

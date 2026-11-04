@@ -9,8 +9,8 @@ const fs     = require("fs");
 const path   = require("path");
 
 const {
-  CRISIS_KEYWORDS, USER_EMOTIONS, REPLY_SCHEMA, CLASSIFY_SCHEMA, CLASSIFY_INSTRUCTION, CLASSIFY_HISTORY_TURNS,
-  hasCrisisKeyword, buildClassifyMessage, parseClassification, parseReply,
+  CRISIS_KEYWORDS, USER_EMOTIONS, REPLY_SCHEMA, CLASSIFY_SCHEMA, CLASSIFY_INSTRUCTION,
+  hasCrisisKeyword, parseClassification, parseReply, extractStreamingLine,
 } = require("../js/safety");
 
 // -----------------------------------------
@@ -192,48 +192,33 @@ test("CLASSIFY_SCHEMA: 書き換えられない", () => {
 });
 
 test("CLASSIFY_INSTRUCTION: 判定の決め方の大事な部分が残っている", () => {
-  for (const phrase of ["【判定する発言】", "【これまでの会話】", "迷ったら true にする", "\"received\"", "\"said\"", "\"reason\""]) {
+  const phrases = [
+    "「つむぎ：」", "判定するのは、今回の発言だけです", "今回の判定には入れない",
+    "迷ったら true にする", "\"received\"", "\"said\"", "\"reason\"",
+  ];
+  for (const phrase of phrases) {
     assert.ok(CLASSIFY_INSTRUCTION.includes(phrase), phrase);
   }
 });
 
-// -----------------------------------------
-// buildClassifyMessage
-// -----------------------------------------
-const turn = (u, a) => [{ role: "user", content: u }, { role: "assistant", content: a }];
-
-test("buildClassifyMessage: 会話の流れがなければ、今回の発言だけを渡す", () => {
-  assert.equal(buildClassifyMessage([], "今日も疲れた"), "【判定する発言】\n今日も疲れた");
-  assert.equal(buildClassifyMessage(undefined, "今日も疲れた"), "【判定する発言】\n今日も疲れた");
+test("CLASSIFY_INSTRUCTION: 最初の4行は会話の読み方で、5行目は空、そのあとは今の決め方", () => {
+  // 測定（2026-10-27）の c2 と同じ文。4行目までが会話の読み方、5行目から後ろは前からある判定の決め方
+  const lines = CLASSIFY_INSTRUCTION.split("\n");
+  assert.deepEqual(lines.slice(0, 4), [
+    "あなたは、相談アプリ「つむぎ」の会話を読んで、安全判定だけを行う係です。ユーザーへの返事は書きません。",
+    "これから渡す会話で、user はアプリを使っている社員、assistant（「つむぎ：」で始まる文）は相談アプリ「つむぎ」の返事です（あなたの発言ではありません）。",
+    "会話の最後の user の発言が「今回の発言」です。判定するのは、今回の発言だけです。",
+    "それより前のやり取りは、今回の発言の意味を読み取るために使うこと。前のやり取りに危機やハラスメントの話があっても、今回の発言がその話の続きでなければ、今回の判定には入れない。",
+  ]);
+  assert.equal(lines[4], "");
+  assert.ok(lines[5].startsWith('"crisis": 今回の発言（とそこまでの流れ）に、'), lines[5]);
+  assert.equal(lines[lines.length - 1], '出力例：{"reason":"...","crisis":false,"harassment":"none"}');
 });
 
-test("buildClassifyMessage: 直前の往復を【これまでの会話】として前に付ける", () => {
-  const history = turn("最近ほとんど眠れてない", "眠れてないんだ…");
-  assert.equal(
-    buildClassifyMessage(history, "眠れる薬、もうけっこう集めてある"),
-    "【これまでの会話】\nユーザー：最近ほとんど眠れてない\nつむぎ：眠れてないんだ…\n\n【判定する発言】\n眠れる薬、もうけっこう集めてある"
-  );
-});
-
-test("buildClassifyMessage: 渡すのは直前の CLASSIFY_HISTORY_TURNS 往復だけ", () => {
-  assert.equal(CLASSIFY_HISTORY_TURNS, 2);
-  const history = [...turn("1つ目", "返事1"), ...turn("2つ目", "返事2"), ...turn("3つ目", "返事3")];
-  const message = buildClassifyMessage(history, "今回");
-  assert.ok(!message.includes("1つ目"), "古い往復が入っている");
-  assert.ok(message.includes("ユーザー：2つ目\nつむぎ：返事2\nユーザー：3つ目\nつむぎ：返事3"));
-});
-
-test("buildClassifyMessage: 中身が文字列でないものや、ユーザーとつむぎ以外の発言は飛ばす", () => {
-  const history = [
-    { role: "system", content: "設定" },
-    { role: "user", content: null },
-    { role: "user", content: "疲れた" },
-    { role: "assistant", content: "疲れたんだね" },
-  ];
-  assert.equal(
-    buildClassifyMessage(history, "今回"),
-    "【これまでの会話】\nユーザー：疲れた\nつむぎ：疲れたんだね\n\n【判定する発言】\n今回"
-  );
+test("CLASSIFY_INSTRUCTION: 判定用の履歴と同じ『つむぎ：』を使う", () => {
+  // 判定用の履歴の assistant の発言は、この文字で始まる（js/conversation.js）。指示の中の呼び方とそろえておく
+  const { JUDGE_SPEAKER_PREFIX } = require("../js/conversation");
+  assert.ok(CLASSIFY_INSTRUCTION.includes("「" + JUDGE_SPEAKER_PREFIX + "」"));
 });
 
 // -----------------------------------------
@@ -278,5 +263,46 @@ test("parseClassification: JSON が途中で切れていても、crisis が true
 test("parseClassification: 読み取れないものや文字列以外は、危機なし・ハラスメントなし", () => {
   for (const value of ["", "わかりません", undefined, null, 123]) {
     assert.deepEqual(parseClassification(value), { crisis: false, harassment: "none" }, String(value));
+  }
+});
+
+// -----------------------------------------
+// extractStreamingLine（書きかけの返事の JSON から、line をいま届いたところまで取り出す）
+// -----------------------------------------
+test("extractStreamingLine: line の値がまだ始まっていなければ null", () => {
+  assert.equal(extractStreamingLine('{"user_emotion":"tired","emotion":"sad"'), null);
+  assert.equal(extractStreamingLine('{"user_emotion":"tired","emotion":"sad","line":'), null);
+});
+
+test("extractStreamingLine: 書きかけの line は、届いたところまで", () => {
+  assert.equal(extractStreamingLine('{"user_emotion":"tired","emotion":"sad","line":"月末で毎日'), "月末で毎日");
+  assert.equal(extractStreamingLine('"line" : "a'), "a");
+});
+
+test("extractStreamingLine: 書き終えた line は、閉じる引用符まで", () => {
+  assert.equal(
+    extractStreamingLine('{"user_emotion":"tired","emotion":"sad","line":"そうなんだ","share":"x'),
+    "そうなんだ"
+  );
+});
+
+test("extractStreamingLine: エスケープを読む", () => {
+  assert.equal(extractStreamingLine('"line":"「a」\\"b\\"\\nc\\u3042"'), '「a」"b"\ncあ');
+  assert.equal(extractStreamingLine('"line":"a\\\\b\\/c\\td\\re\\bf\\fg"'), "a\\b/c\td\re\bf\fg");
+});
+
+test("extractStreamingLine: エスケープの途中で切れたら、その手前まで", () => {
+  assert.equal(extractStreamingLine('"line":"abc\\'), "abc");
+  assert.equal(extractStreamingLine('"line":"abc\\u30'), "abc");
+});
+
+test("extractStreamingLine: サロゲートペアの片方だけなら除く", () => {
+  assert.equal(extractStreamingLine('"line":"x\\ud83d'), "x");
+  assert.equal(extractStreamingLine('"line":"x\\ud83d\\ude00"'), "x😀");
+});
+
+test("extractStreamingLine: 文字列以外は null", () => {
+  for (const value of [undefined, 42, null, ""]) {
+    assert.equal(extractStreamingLine(value), null, String(value));
   }
 });

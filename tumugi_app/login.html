@@ -18,25 +18,54 @@
     <div class="setup-card">
       <p class="setup-sub">empathy AI</p>
       <h2 class="setup-title">つむぎ</h2>
-      <p class="setup-desc">社員IDとパスワードでログインしてください</p>
 
-      <div class="setup-fields">
-        <div class="setup-field">
-          <label class="setup-label">社員ID</label>
-          <input type="text" id="loginEmployeeCode" class="setup-input" placeholder="E001" autocomplete="username">
+      <!-- 1段目：社員IDとパスワードでログインする -->
+      <div id="loginStep" style="width:100%;">
+        <p class="setup-desc">社員IDとパスワードでログインしてください</p>
+
+        <div class="setup-fields">
+          <div class="setup-field">
+            <label class="setup-label">社員ID</label>
+            <input type="text" id="loginEmployeeCode" class="setup-input" placeholder="E001" autocomplete="username">
+          </div>
+          <div class="setup-field">
+            <label class="setup-label">パスワード</label>
+            <input type="password" id="loginPassword" class="setup-input" placeholder="••••••••" autocomplete="current-password">
+          </div>
         </div>
-        <div class="setup-field">
-          <label class="setup-label">パスワード</label>
-          <input type="password" id="loginPassword" class="setup-input" placeholder="••••••••" autocomplete="current-password">
-        </div>
+
+        <p id="loginError" style="color:#B23A2A; font-size:11.5px; font-family:'Noto Sans JP',sans-serif; opacity:0.9; margin-bottom:14px; min-height:1.2em; text-align:center;"></p>
+
+        <button class="setup-btn" id="loginSubmitBtn">ログイン</button>
       </div>
 
-      <p id="loginError" style="color:#B23A2A; font-size:11.5px; font-family:'Noto Sans JP',sans-serif; opacity:0.9; margin-bottom:14px; min-height:1.2em; text-align:center;"></p>
+      <!-- 2段目：仮のパスワードでログインしたとき、新しいパスワードを決める（初めは隠しておく） -->
+      <div id="passwordChangeStep" style="width:100%;" hidden>
+        <h3 style="font-family:var(--font-jp); font-size:15px; font-weight:600; color:var(--amber-pale); letter-spacing:0.08em; text-align:center; margin-bottom:10px;">新しいパスワードを決めてください</h3>
+        <p class="setup-desc">管理者から伝えられた仮のパスワードは、ここで新しいパスワードに変えてください</p>
 
-      <button class="setup-btn" id="loginSubmitBtn">ログイン</button>
+        <div class="setup-fields">
+          <div class="setup-field">
+            <label class="setup-label">新しいパスワード</label>
+            <input type="password" id="firstNewPassword" class="setup-input" placeholder="••••••••" autocomplete="new-password">
+          </div>
+          <div class="setup-field">
+            <label class="setup-label">新しいパスワード（もう一度）</label>
+            <input type="password" id="firstConfirmPassword" class="setup-input" placeholder="••••••••" autocomplete="new-password">
+          </div>
+        </div>
+
+        <p id="firstPasswordError" style="color:#B23A2A; font-size:11.5px; font-family:'Noto Sans JP',sans-serif; opacity:0.9; margin-bottom:14px; min-height:1.2em; text-align:center;"></p>
+
+        <button class="setup-btn" id="firstPasswordSubmitBtn">変えてはじめる</button>
+        <button class="setup-skip" id="firstPasswordCancelBtn" style="display:block; margin:0 auto;">やめる</button>
+      </div>
     </div>
   </div>
 
+  <script src="js/ollama.js"></script>
+  <script src="js/safety.js"></script>
+  <script src="js/password.js"></script>
   <script src="js/auth.js"></script>
 </body>
 </html>

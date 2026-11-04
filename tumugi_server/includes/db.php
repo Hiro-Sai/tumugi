@@ -68,20 +68,38 @@ function getBearerToken(): ?string {
 }
 
 // -----------------------------------------
+// トークンを DB に保存する形（SHA-256 の16進64文字）にする。
+// DB には元のトークンを置かない（DB が漏れても、そのまま使われないようにするため）。
+// トークンは32バイトのランダムな値なので、ソルトは要らない。
+// -----------------------------------------
+function hashToken(string $token): string {
+    return hash('sha256', $token);
+}
+
+// -----------------------------------------
 // トークン検証（Authorization: Bearer <token> を想定）
 // 成功時は employee_id を返す。失敗時は null
+// 退職者（is_active = 0）のトークンは、期限内でも通さない
+// 仮のパスワードのまま（must_change_password = 1）の社員のトークンも通さない。
+// 管理者が決めた仮のパスワードで、チャットやダッシュボードを使わせないため。
+// 仮のパスワードの社員にもできるのは、パスワードの変更とログアウトだけ。
+// パスワードの変更（change_password.php）だけが、引数を true にして呼ぶ。
 // -----------------------------------------
-function verifyToken(): ?int {
+function verifyToken(bool $allowPendingPasswordChange = false): ?int {
     $token = getBearerToken();
     if ($token === null) {
         return null;
     }
 
     $pdo = getDbConnection();
-    $stmt = $pdo->prepare(
-        "SELECT employee_id FROM auth_tokens WHERE token = :token AND expires_at > NOW()"
-    );
-    $stmt->execute(['token' => $token]);
+    $sql = "SELECT t.employee_id FROM auth_tokens t
+            JOIN employees e ON e.id = t.employee_id
+            WHERE t.token = :token AND t.expires_at > NOW() AND e.is_active = 1";
+    if (!$allowPendingPasswordChange) {
+        $sql .= " AND e.must_change_password = 0";
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute(['token' => hashToken($token)]);
     $row = $stmt->fetch();
 
     return $row ? (int)$row['employee_id'] : null;

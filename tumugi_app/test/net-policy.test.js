@@ -25,7 +25,7 @@ function assertRejected(cases) {
 // -----------------------------------------
 // buildRelayUrl
 // -----------------------------------------
-test("buildRelayUrl: 許可した9つの組は URL を返す", () => {
+test("buildRelayUrl: 許可した16の組は URL を返す", () => {
   const cases = [
     ["ollama",   "/api/chat",                             "POST", "http://127.0.0.1:11434/api/chat"],
     ["ollama",   "/api/tags",                             "GET",  "http://127.0.0.1:11434/api/tags"],
@@ -36,6 +36,13 @@ test("buildRelayUrl: 許可した9つの組は URL を返す", () => {
     ["server",   "/save_emotion.php",                     "POST", "http://127.0.0.1:8080/api/save_emotion.php"],
     ["server",   "/dashboard_data.php",                   "GET",  "http://127.0.0.1:8080/api/dashboard_data.php"],
     ["server",   "/change_password.php",                  "POST", "http://127.0.0.1:8080/api/change_password.php"],
+    ["server",   "/logout.php",                           "POST", "http://127.0.0.1:8080/api/logout.php"],
+    ["server",   "/admin_employees.php",                  "GET",  "http://127.0.0.1:8080/api/admin_employees.php"],
+    ["server",   "/admin_employee_create.php",            "POST", "http://127.0.0.1:8080/api/admin_employee_create.php"],
+    ["server",   "/admin_employee_update.php",            "POST", "http://127.0.0.1:8080/api/admin_employee_update.php"],
+    ["server",   "/admin_employee_reset.php",             "POST", "http://127.0.0.1:8080/api/admin_employee_reset.php"],
+    ["server",   "/admin_employee_status.php",            "POST", "http://127.0.0.1:8080/api/admin_employee_status.php"],
+    ["server",   "/admin_employee_delete.php",            "POST", "http://127.0.0.1:8080/api/admin_employee_delete.php"],
   ];
   for (const [service, reqPath, method, expected] of cases) {
     assert.equal(buildRelayUrl(service, reqPath, method), expected, `${service} ${method} ${reqPath}`);
@@ -57,7 +64,7 @@ test("buildRelayUrl: 許可していないエンドポイントを拒否する",
     ["ollama", "/api/delete",   "DELETE"],
     ["ollama", "/api/delete",   "POST"],
     ["ollama", "/api/generate", "POST"],
-    ["server", "/logout.php",   "POST"],
+    ["server", "/seed_demo.php", "POST"],
   ]);
 });
 
@@ -68,6 +75,9 @@ test("buildRelayUrl: メソッドが違えば拒否する", () => {
     ["ollama", "/api/chat",          "post"],
     ["server", "/dashboard_data.php", "POST"],
     ["server", "/change_password.php", "GET"],
+    ["server", "/logout.php",          "GET"],
+    ["server", "/admin_employees.php",       "POST"],
+    ["server", "/admin_employee_delete.php", "GET"],
   ]);
 });
 

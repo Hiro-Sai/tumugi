@@ -286,11 +286,14 @@
     </div>
   </div>
 
-  <!-- utils.js → auth.js → safety.js → prompt.js → password.js → lipsync.js → script.js の順で読み込む -->
+  <!-- utils.js → auth.js → safety.js → prompt.js → ollama.js → conversation.js → password.js → lipsync.js → script.js の順で読み込む
+       （conversation.js は読み込み時に TumugiPrompt を使うので、prompt.js より後に置く） -->
  <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/safety.js"></script>
   <script src="js/prompt.js"></script>
+  <script src="js/ollama.js"></script>
+  <script src="js/conversation.js"></script>
   <script src="js/password.js"></script>
   <script src="js/lipsync.js"></script>
   <script src="js/script.js"></script>

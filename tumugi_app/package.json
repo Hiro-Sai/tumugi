@@ -23,6 +23,7 @@
       "preload.js",
       "net-policy.js",
       "memory-crypto.js",
+      "ollama-relay.js",
       "index.html",
       "login.html",
       "admin-demo.html",

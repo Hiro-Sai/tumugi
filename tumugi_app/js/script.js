@@ -8,8 +8,35 @@ let mouthOpen      = false; // 声に合わせて口が開いているか（play
 
 // =========================
 // 会話履歴（マルチターン）
+// 判定用と返事用の履歴は、1つの会話（conversation）にまとめて持つ。Ollama に送る入力は、
+// 前の回の入力の後ろに足すだけで組み立てる（理由は js/conversation.js）。
+// 判定に渡すのは直近の3件だけで、返事のあとに判定の整えを送る（askOllama・showCrisisSupportMessages）。
+// 会話は、最初に必要になったときに作る（ensureConversation）。
 // =========================
-const conversationHistory = [];
+let conversation = null;
+
+// 記憶の抽出で新しく分かったこと。次の返事の入力で、発言の後ろに1回だけ付ける
+// （システムプロンプトは会話の途中では変えないため。取り出すのは takePendingFacts）。
+// 履歴を作り直したときは、今の記憶がシステムプロンプトに入るので、空にする（applyPendingRebuild）
+let pendingFacts = {};
+
+// 直近の返事の呼び出しで、Ollama が読んだ入力の語数（prompt_eval_count）。askOllama が入れる。
+// 要約するかどうかの判断（needsSummary）に使う。
+// Ollama 0.40.11 は、キャッシュから使った分も含めた数を返す（2026-10-27 に確かめた）。
+// 版が変わって、新しく処理した分だけを返すようになると、6000語のきっかけは黙って立たなくなり、80件のきっかけだけが残る。
+// Ollama の版を上げたら、console の `[時間]` で、返事の入力の語数が回ごとに増えていくことを確かめる。
+let lastReplyPromptTokens = 0;
+
+// 社員の発言を処理している途中か（handleUserInput の始まりから終わりまで。声を読んでいるあいだも含む）。
+// 履歴の作り直しは、この回の分を履歴に足し終えてから行うので、途中は待たせる（requestRebuild）
+let turnInProgress = false;
+
+// 待たせている履歴の作り直しの頼み（{ summary, dropItems }）。なければ null。
+// 要約と記憶の変更が重なったら、1回にまとめる（mergeRebuild）
+let pendingRebuild = null;
+
+// 今の発言を受け取った時刻（handleUserInput の始まり）。「発言から文字まで」の時間の記録に使う
+let turnStartedAt = 0;
 
 // ユーザーの気持ち（新しい順）。「感情の流れに注意」の判断（detectEmotionStreak）に使う。
 // つむぎの表情ではなく、返事の user_emotion を入れる
@@ -20,41 +47,29 @@ const EMOTION_HISTORY_MAX = 5;
 const recentLines = [];
 const RECENT_LINES_MAX = 3;
 
+// 要約の文。返事のシステムプロンプトに入る（summaryToText）。履歴を作り直すときに入れ替わる
 let conversationSummary = "";
+// 要約を Ollama に頼んで、応答を待っているあいだは true（要約が重ならないようにする）
 let isSummarizing = false;
-
-const SUMMARY_TRIGGER  = 20;
-const SUMMARY_KEEP     = 10;
 
 // =========================
 // Ollama 設定
-// 企業配布時にモデルを固定したい場合は DEFAULT_MODEL をここで直接書き換えるか、
-// 将来的に設定ファイル読み込み機構を実装してここで上書きすること。
+// モデル名・num_ctx・think の設定と、その理由は js/ollama.js にある（index.html で script.js より先に読み込む）。
+// 企業配布時にモデルを固定したい場合も、js/ollama.js の DEFAULT_MODEL を書き換える。
 // 一般社員向けUIからのモデル切り替え機能は廃止済み（運用者のみが対応する想定）。
 // checkModelAvailability() 等の関数自体は残しているが、対応するUI要素が
 // index.html側にないため、現状呼び出されることはない。
-//
-// /api/chat には必ず think: false を付ける。Gemma 4 は何も指定しないと
-// 「考えてから答える」モードで動き、考える部分だけで num_predict を使い切って
-// 返事（content）が空になるため（2026-10-13 に確認）。
-// 考えるモードのないモデルに付けても、エラーにはならない。
-//
-// num_ctx は、すべての呼び出しで OLLAMA_NUM_CTX にそろえる。値が違うと、そのたびに
-// モデルを読み込み直す（2026-10-13 の測定で、記憶の抽出だけ 2048 だった頃は10往復で19回、
-// 1回あたり約10秒）。
 // =========================
-const MODEL_KEY      = "tumugi_model";
-const DEFAULT_MODEL  = "gemma4:e4b";
-const OLLAMA_NUM_CTX = 8192;
+const OLLAMA_NUM_CTX = TumugiOllama.NUM_CTX;
 
 function getOllamaModel() {
-  return localStorage.getItem(MODEL_KEY) || DEFAULT_MODEL;
+  return TumugiOllama.getOllamaModel(localStorage);
 }
 
 function saveOllamaModel(modelName) {
   const name = modelName.trim();
   if (!name) return;
-  localStorage.setItem(MODEL_KEY, name);
+  localStorage.setItem(TumugiOllama.MODEL_KEY, name);
 }
 
 // =========================
@@ -119,6 +134,7 @@ async function extractAndSaveMemory(exchanges) {
   const prompt = TumugiPrompt.buildMemoryPrompt(exchanges, currentMemory);
 
   try {
+    const startedAt = performance.now();
     const result = await window.electronAPI.netOllama({
       path: "/api/chat",
       method: "POST",
@@ -126,11 +142,13 @@ async function extractAndSaveMemory(exchanges) {
         model: getOllamaModel(),
         messages: [{ role: "user", content: prompt }],
         stream: false,
-        think: false, // 理由は「Ollama 設定」のコメント
+        think: false, // 理由は js/ollama.js の先頭のコメント
         options: { temperature: 0.1, num_ctx: OLLAMA_NUM_CTX, num_predict: 200 },
       },
     });
+    const wallMs = Math.round(performance.now() - startedAt);
     if (!result.ok) return;
+    logTimings("記憶の抽出", result.data, wallMs);
 
     const raw = result.data.message?.content ?? "";
 
@@ -143,6 +161,8 @@ async function extractAndSaveMemory(exchanges) {
 
     const newMemory = { ...currentMemory, ...extracted };
     saveMemory(newMemory);
+    // 保存した分は、次の返事の発言の後ろにも付ける（返事のシステムプロンプトは、会話の途中では変えない）
+    pendingFacts = { ...pendingFacts, ...extracted };
     console.log(`[Memory] ${Object.keys(extracted).length} 件を更新しました`); // 中身は個人の情報なので出さない
   } catch (e) {
     console.warn("[Memory] 抽出失敗:", e.message);
@@ -150,60 +170,108 @@ async function extractAndSaveMemory(exchanges) {
 }
 
 // =========================
-// 会話履歴の要約圧縮
+// 会話履歴の要約圧縮と、履歴の作り直し
+// 要約はめったに起こさない（会話の流れが一定の件数を超えたか、返事の入力が一定の語数を超えたとき。
+// js/conversation.js の needsSummary）。履歴の途中を変えると Ollama のキャッシュが効かなくなるため。
+// 履歴を作り直して先読みするのは、要約ができたときと、記憶の画面で記憶を直したときだけ。
+// それ以外のときは、履歴に足すだけ。
 // =========================
-async function updateConversationSummary() {
-  if (isSummarizing) return;
-  if (conversationHistory.length <= SUMMARY_TRIGGER) return;
 
-  isSummarizing = true;
-
-  const toSummarize = conversationHistory.slice(0, -SUMMARY_KEEP);
-  if (toSummarize.length === 0) { isSummarizing = false; return; }
-
-  const historyText = toSummarize.map(m => {
+// 要約の指示を作る。messages は { role, content } の配列（要約する分の発言）
+function buildSummaryPrompt(messages) {
+  const historyText = messages.map(m => {
     const role = m.role === "user" ? "ユーザー" : "つむぎ";
     return `${role}：${m.content}`;
   }).join("\n");
 
-  const prompt = `以下は「つむぎ」という共感AIとユーザーの会話の前半部分です。
+  return `以下は「つむぎ」という共感AIとユーザーの会話の前半部分です。
 この会話の内容を、後半の会話の文脈理解に使えるよう200字以内で要約してください。
 ユーザーの感情の流れ・話題・重要な出来事を中心にまとめること。
 要約のみ出力。前置き・見出し不要。
 
 【会話】
 ${historyText}`;
-
-  try {
-    const result = await window.electronAPI.netOllama({
-      path: "/api/chat",
-      method: "POST",
-      body: {
-        model: getOllamaModel(),
-        messages: [{ role: "user", content: prompt }],
-        stream: false,
-        think: false, // 理由は「Ollama 設定」のコメント
-        options: { temperature: 0.3, num_ctx: OLLAMA_NUM_CTX, num_predict: 300 },
-      },
-    });
-    if (!result.ok) { isSummarizing = false; return; }
-
-    const summary = (result.data.message?.content ?? "").trim();
-    if (summary) {
-      conversationSummary = summary;
-      conversationHistory.splice(0, conversationHistory.length - SUMMARY_KEEP);
-      console.log("[Summary] 要約完了:", conversationSummary.slice(0, 40) + "…");
-    }
-  } catch (e) {
-    console.warn("[Summary] 要約失敗:", e.message);
-  } finally {
-    isSummarizing = false;
-  }
 }
 
 function summaryToText() {
   if (!conversationSummary) return "";
   return `\n【これまでの会話の流れ（要約）】\n${conversationSummary}`;
+}
+
+// 古い分を Ollama に要約させ、できたら履歴の作り直しを頼む（requestRebuild）。
+// askOllama の最後で、needsSummary のときだけ呼ぶ。待たない。
+// 次の場合は何もしない。
+// ・要約の応答を待っているあいだ（isSummarizing）
+// ・作り直しが待っているあいだ（pendingRebuild）。ここで次の要約を頼むと、消す個数（dropItems）が
+//   作り直す前の履歴で数えたものになり、作り直したあとに当てると消しすぎてしまうため
+// ・要約する分がないとき（summaryTarget が null）
+// 要約は履歴を使わず、要約する分だけを1回の呼び出しで送る。失敗したり、要約が空だったりしたときは作り直さない
+// （needsSummary はまだ真なので、次の回の終わりにまた頼む）。
+// ログは数と時間だけ（要約の文は会話の内容を含むので出さない）。
+async function updateConversationSummary() {
+  if (isSummarizing || pendingRebuild) return;
+  if (!conversation) return;
+  const target = TumugiConversation.summaryTarget(conversation);
+  if (!target) return;
+
+  isSummarizing = true;
+  try {
+    const startedAt = performance.now();
+    let res;
+    try {
+      res = await window.electronAPI.netOllama({
+        path: "/api/chat",
+        method: "POST",
+        body: {
+          model: getOllamaModel(),
+          messages: [{ role: "user", content: buildSummaryPrompt(target.messages) }],
+          stream: false,
+          think: false, // 理由は js/ollama.js の先頭のコメント
+          options: { temperature: 0.3, num_ctx: OLLAMA_NUM_CTX, num_predict: 300 },
+        },
+      });
+    } finally {
+      isSummarizing = false; // 応答が届いたら（成功でも失敗でも）戻す
+    }
+    const wallMs = Math.round(performance.now() - startedAt);
+    if (!res.ok) {
+      console.warn("[Summary] 要約の呼び出しに失敗:", res.reason);
+      return;
+    }
+    logTimings("要約", res.data, wallMs);
+
+    const summary = (res.data?.message?.content ?? "").trim();
+    if (!summary) return;
+    console.log(`[Summary] 要約しました（まとめた分：${target.dropItems}件）`);
+    requestRebuild({ summary, dropItems: target.dropItems });
+  } catch (err) {
+    console.warn("[Summary] 要約失敗:", err?.message ?? err);
+  }
+}
+
+// 履歴の作り直しを頼む。next は { summary, dropItems }（記憶の画面からは summary が null、dropItems が 0）。
+// すでに待っている頼みがあれば1回にまとめる（mergeRebuild）。
+// 社員の発言を処理している途中なら、その回が終わるまで待つ。その回の分を履歴に足し終えてから作り直すため
+function requestRebuild(next) {
+  pendingRebuild = TumugiConversation.mergeRebuild(pendingRebuild, next);
+  if (!turnInProgress) applyPendingRebuild();
+}
+
+// 待っている作り直しを行い、作り直した履歴を先読みする（待たない）。会話か頼みがなければ何もしない。
+// 要約があれば入れ替え、返事のシステムプロンプトには今の記憶と要約を入れ直す（buildSystemPrompt）。
+// まだ付けていない「新しく分かったこと」（pendingFacts）も今の記憶に入っているので、捨てる
+// （残すと、記憶の画面で消した項目が、次の発言の後ろに付いてしまう）。
+// 判定に渡す直近3件は、作り直しで変わらない（要約しても、最後の10件は残る）ので、返事だけを先読みする。
+// 頼みは先に取り出して空にする。作り直しの途中で例外が出ても、次の要約を止めたままにしないため
+function applyPendingRebuild() {
+  if (!conversation || !pendingRebuild) return;
+  const { summary, dropItems } = pendingRebuild;
+  pendingRebuild = null;
+
+  if (summary) conversationSummary = summary;
+  conversation = TumugiConversation.rebuild(conversation, { replySystem: buildSystemPrompt(), dropItems });
+  pendingFacts = {};
+  prefetchConversation({ judge: false });
 }
 
 // =========================
@@ -393,6 +461,8 @@ function buildDynamicNote() {
 // 変わらないキャラクターの指示を先頭に、ときどき変わる記憶と要約を末尾に置く（理由は js/prompt.js）。
 // 毎回変わる動的ノートは、ここではなく askOllama() で今回の発言の後ろに付ける。
 // 安全判定（危機検知・ハラスメント検知）は、返事とは別の classifySafety() で行う。
+// 呼ぶのは、会話を作るとき（ensureConversation）と、履歴を作り直すとき（applyPendingRebuild）だけ。
+// 会話の途中で記憶が増えても、システムプロンプトは変えない（作り直すときに、そのときの記憶と要約を入れ直す）。
 // =========================
 function buildSystemPrompt() {
   const preset = getActivePreset();
@@ -401,6 +471,30 @@ function buildSystemPrompt() {
     memoryToText(loadMemory()),
     summaryToText()
   );
+}
+
+// =========================
+// 会話の持ち方
+// 会話（js/conversation.js）は、最初に必要になったときに作る。システムプロンプトに今の記憶を入れるので、
+// 記憶を読み込んだあと（「はじめまして」で入れた名前も含む）になる。
+// =========================
+function ensureConversation() {
+  if (!conversation) {
+    conversation = TumugiConversation.createConversation(buildSystemPrompt(), TumugiSafety.CLASSIFY_INSTRUCTION);
+  }
+  return conversation;
+}
+
+// 新しく分かったことを取り出す（取り出すと空になる）
+function takePendingFacts() {
+  const taken = pendingFacts;
+  pendingFacts = {};
+  return taken;
+}
+
+// 取り出した分を戻す。取り出したあとに増えた分があれば、そちらを優先する
+function restorePendingFacts(taken) {
+  pendingFacts = { ...taken, ...pendingFacts };
 }
 
 // =========================
@@ -448,6 +542,7 @@ randomBlink();
 
 // =========================
 // チャット追加
+// 足した吹き出しの要素を返す（返事の line を少しずつ出すときに、あとから書き換えるため）
 // =========================
 function addMessage(text, sender) {
   const bubble = document.createElement("div");
@@ -456,6 +551,7 @@ function addMessage(text, sender) {
   bubble.classList.add(sender === "user" ? "userBubble" : "aiBubble");
   chatArea.appendChild(bubble);
   chatArea.scrollTop = chatArea.scrollHeight;
+  return bubble;
 }
 
 // =========================
@@ -561,15 +657,22 @@ async function speakWithVOICEVOX(text) {
 // 最大3パートを表示 & 読み上げ。
 // 再生中のパートと並行して次のパートの音声合成を裏で進めておくことで、
 // パート間のレイテンシ（無音の間）を縮める。
+// lineBubble：返事を受け取りながら少しずつ line を出した吹き出し（askOllama が渡す）。あるときは、
+// 最初のパートで吹き出しを足さず、これを確かめたあとの line にして使う（途中の文字と違っていても、確かめたあとが正しい）。
 // =========================
-async function showTwoPartResponse(line, share, question) {
+async function showTwoPartResponse(line, share, question, lineBubble = null) {
   const parts = [line, share, question].filter(Boolean);
   if (parts.length === 0) return;
 
   let nextSynthesis = synthesizeVoiceSafe(parts[0]);
 
   for (let i = 0; i < parts.length; i++) {
-    addMessage(parts[i], "ai");
+    if (i === 0 && lineBubble) {
+      lineBubble.textContent = parts[0];
+      chatArea.scrollTop = chatArea.scrollHeight;
+    } else {
+      addMessage(parts[i], "ai");
+    }
 
     const result = await nextSynthesis;
 
@@ -596,12 +699,16 @@ const CRISIS_SUPPORT_LINES = Object.freeze([
   "今すぐ誰かに話してほしいな。よりそいホットライン（0120-279-338）は24時間つながれるよ。電話が難しければチャットでも相談できるから、試してみてくれない？",
 ]);
 
-// 案内を出し、その発言と案内を会話の流れに残す。
+// 案内を出し、その発言と案内を会話の流れ（判定用と返事用の両方の履歴）に残す。
 // 次の発言の判定（classifySafety）とつむぎの返事が、前に危機があったことを知ったうえで動けるようにするため
 // （「死にたい」のあとの「なんでもない、言っておきたかっただけ」を拾えるように）。
+// 履歴を足したあとは、返事の回と同じく整え（返事の整えと判定の整え。sendPrefill）を送る。待たない。
+// 案内は少しずつ出さず、一度に出す。
 async function showCrisisSupportMessages(userText) {
-  conversationHistory.push({ role: "user", content: userText });
-  conversationHistory.push({ role: "assistant", content: CRISIS_SUPPORT_LINES.join("　") });
+  const conv = ensureConversation();
+  TumugiConversation.addExchange(conv, userText, CRISIS_SUPPORT_LINES.join("　"), "");
+  sendPrefill(TumugiConversation.replyPrefillMessages(conv), "整え");
+  sendPrefill(TumugiConversation.judgePrefillMessages(conv), "整え（判定）");
 
   await showTwoPartResponse(CRISIS_SUPPORT_LINES[0], CRISIS_SUPPORT_LINES[1], "");
 }
@@ -609,7 +716,10 @@ async function showCrisisSupportMessages(userText) {
 // =========================
 // 安全判定（判定専用の呼び出し）
 // 返事を作る前に呼び、crisis と harassment だけを決めさせる。指示とスキーマは js/safety.js にある。
-// - 直前の2往復も渡す。流れでしか分からない危機（「猫の引き取り先を決めた」など）を拾うため
+// - 直近の3件の会話（判定用の履歴）も渡す。流れでしか分からない危機（「猫の引き取り先を決めた」など）を拾うため。
+//   会話の全体を渡すと、長い会話のあとで見逃しが増えた（js/conversation.js）。
+//   前の回のあとに送った判定の整え（sendPrefill）の後ろに、今回の発言を足すだけなので、Ollama のキャッシュが効く
+//   （Ollama につながらなかった回のあとは整えを送らないので、次の1回だけ効かずに遅くなる）
 // - 考えるモードは使わない（2026-10-13 の測定で、精度は上がらず、1回に20秒以上かかった）
 // - temperature 0：同じ発言には同じ判定を返すようにする
 // - 判定の理由（reason）は、発言の中身を含むので保存も表示もしない
@@ -620,29 +730,29 @@ async function showCrisisSupportMessages(userText) {
 async function classifySafety(userText) {
   const none = { ok: false, crisis: false, harassment: "none" };
   try {
+    const startedAt = performance.now();
     const res = await window.electronAPI.netOllama({
       path: "/api/chat",
       method: "POST",
       body: {
         model: getOllamaModel(),
-        messages: [
-          { role: "system", content: TumugiSafety.CLASSIFY_INSTRUCTION },
-          { role: "user", content: TumugiSafety.buildClassifyMessage(conversationHistory, userText) },
-        ],
+        messages: TumugiConversation.judgeMessages(ensureConversation(), userText),
         stream: false,
-        think: false, // 理由は「Ollama 設定」のコメント
+        think: false, // 理由は js/ollama.js の先頭のコメント
         format: TumugiSafety.CLASSIFY_SCHEMA,
         options: {
           temperature: 0,
-          num_ctx: OLLAMA_NUM_CTX, // 理由は「Ollama 設定」のコメント
+          num_ctx: OLLAMA_NUM_CTX, // 理由は js/ollama.js の先頭のコメント
           num_predict: 200,
         },
       },
     });
+    const wallMs = Math.round(performance.now() - startedAt);
     if (!res.ok) {
       console.warn("[Safety] 判定の呼び出しに失敗:", res.reason);
       return none;
     }
+    logTimings("判定", res.data, wallMs);
     return { ok: true, ...TumugiSafety.parseClassification(res.data?.message?.content ?? "") };
   } catch (err) {
     console.warn("[Safety] 判定の呼び出しに失敗:", err);
@@ -654,36 +764,80 @@ async function classifySafety(userText) {
 // Ollama API 呼び出し（返事）
 // format に JSON スキーマ（js/safety.js の REPLY_SCHEMA）を渡し、5つの欄を必ず出させる。
 // 安全判定はここではなく、先に classifySafety() で行う。
-// 毎回変わる動的ノートは、システムプロンプトではなく今回の発言の後ろに付ける
-// （キャッシュを効かせるため。理由は js/prompt.js）。会話の流れには発言だけを残す。
+// 入力は、会話（js/conversation.js）の返事用の履歴の後ろに、今回の発言を足して組み立てる。
+// 毎回変わる動的ノートと、前の回で新しく分かったことは、システムプロンプトではなく今回の発言の後ろに付ける
+// （キャッシュを効かせるため。理由は js/prompt.js）。履歴に残すのは、発言（と新しく分かったこと）とつむぎの返事の文で、
+// ノートは残さない。
+// 返事が決まったら履歴に足し、続けて整え（返事と判定の履歴だけを読ませて、次の返事と次の判定の入力でキャッシュが効くようにする）と
+// 記憶の抽出を裏で送る。どれも待たない。順番は Ollama の順番待ちに任せる。
+// 要約は、めったに起こさない。会話が長くなったとき（needsSummary）だけ、最後に頼む（updateConversationSummary。待たない）。
+// 要約ができたら、その回が終わってから履歴を作り直す（requestRebuild）。
+// 返事は少しずつ受け取り、line が届いたところから吹き出しに出す（requestReply の onLine）。
+// 吹き出しは1回の返事ごとに1つで、戻り値の lineBubble で渡す（なければ null）。
+// showTwoPartResponse が、確かめたあとの line に置き換えて使う。
+// 返事が使えるかどうかは、少しずつ受け取った文ではなく、最後に届いた全文で決める
+// （かけらと結果が届く順番は保証されないため）。
+// 例外を投げるときは、履歴には足さない（足すのは呼んだ側。handleUserInput が代わりの返事を足す）。
+// 出しかけた吹き出しは消し、取り出した新しく分かったことは戻してから投げる。
 // 戻り値の userEmotion はユーザーの気持ち（分からないときは null）、emotion はつむぎの表情。
 // =========================
 async function askOllama(userText) {
-  const dynamicNote = buildDynamicNote();
-  conversationHistory.push({ role: "user", content: userText });
+  const conv = ensureConversation();
+  const taken = takePendingFacts();
+  const facts = TumugiConversation.factsNote(taken);
 
-  const pastHistory = conversationHistory.slice(-30, -1); // 今回の発言より前
-  const messages = [
-    { role: "system", content: buildSystemPrompt() },
-    ...pastHistory,
-    { role: "user", content: TumugiPrompt.withDynamicNote(userText, dynamicNote) },
-  ];
+  // この回に少しずつ出している line の吹き出し（まだ出していなければ null）
+  let lineBubble = null;
+  let firstLineShown = false;
 
-  // 壊れた返事（TumugiSafety.parseReply が null）は1回だけ作り直す。それでもだめなら代わりの返事にする。
-  // 返事の中身は会話の内容を含むので、ログには出さない
-  let result = TumugiSafety.parseReply(await requestReply(messages));
-  if (!result) {
-    console.warn("[Ollama] 返事が壊れていたので作り直します");
-    result = TumugiSafety.parseReply(await requestReply(messages));
+  const showLine = (line) => {
+    if (lineBubble) {
+      lineBubble.textContent = line;
+      chatArea.scrollTop = chatArea.scrollHeight;
+      return;
+    }
+    lineBubble = addMessage(line, "ai");
+    // 1回の発言につき、最初に文字が出たときの1回だけ（作り直しの分は出さない）。時間だけで、中身は出さない
+    if (!firstLineShown) {
+      firstLineShown = true;
+      console.log(`[時間] 発言から文字まで${((performance.now() - turnStartedAt) / 1000).toFixed(1)}秒`);
+    }
+  };
+
+  const removeLineBubble = () => {
+    if (lineBubble) lineBubble.remove();
+    lineBubble = null;
+  };
+
+  let result;
+  try {
+    const messages = TumugiConversation.replyMessages(conv, userText, buildDynamicNote() + facts);
+
+    // 壊れた返事（TumugiSafety.parseReply が null）は1回だけ作り直す。それでもだめなら代わりの返事にする。
+    // 壊れた返事の吹き出しは、作り直す前に消す。作り直しも少しずつ出す。
+    // 返事の中身は会話の内容を含むので、ログには出さない
+    let reply = await requestReply(messages, showLine);
+    result = TumugiSafety.parseReply(reply.content);
+    if (!result) {
+      console.warn("[Ollama] 返事が壊れていたので作り直します");
+      removeLineBubble();
+      reply = await requestReply(messages, showLine);
+      result = TumugiSafety.parseReply(reply.content);
+    }
+    if (!result) {
+      console.warn("[Ollama] 作り直しても返事が壊れていたので、代わりの返事にします");
+      removeLineBubble();
+      result = getFallback();
+    }
+    lastReplyPromptTokens = reply.data?.prompt_eval_count || 0;
+  } catch (err) {
+    removeLineBubble();
+    restorePendingFacts(taken);
+    throw err;
   }
-  if (!result) {
-    console.warn("[Ollama] 作り直しても返事が壊れていたので、代わりの返事にします");
-    result = getFallback();
-  }
 
-  const assistantText = [result.line, result.share, result.question]
-    .filter(Boolean).join("　");
-  conversationHistory.push({ role: "assistant", content: assistantText });
+  const assistantText = replyToHistoryText(result);
+  TumugiConversation.addExchange(conv, userText, assistantText, facts);
 
   if (result.userEmotion) {
     userEmotionHistory.unshift(result.userEmotion);
@@ -693,22 +847,37 @@ async function askOllama(userText) {
   recentLines.unshift(result.line);
   if (recentLines.length > RECENT_LINES_MAX) recentLines.pop();
 
+  sendPrefill(TumugiConversation.replyPrefillMessages(conv), "整え");
+  sendPrefill(TumugiConversation.judgePrefillMessages(conv), "整え（判定）");
   queueMemoryExtraction(userText, assistantText);
-  updateConversationSummary().catch(() => {});
+  if (TumugiConversation.needsSummary(conv, lastReplyPromptTokens)) updateConversationSummary().catch(() => {});
 
-  return result;
+  return { ...result, lineBubble };
 }
 
-// 返事を1回作らせて、モデルの出力（文字列）を返す。Ollama につながらないときなどは例外を投げる
-async function requestReply(messages) {
-  const ollamaRes = await window.electronAPI.netOllama({
+// つむぎの返事を、履歴に残す1つの文にする（line・share・question を全角の空白でつなぐ）
+function replyToHistoryText(reply) {
+  return [reply.line, reply.share, reply.question].filter(Boolean).join("　");
+}
+
+// 返事を1回作らせる。Ollama から届いたところから少しずつ受け取り、届いた分から取り出した line が
+// 前と変わるたびに onLine(line) を呼ぶ（取り出しは TumugiSafety.extractStreamingLine。まだ空のときは呼ばない）。
+// 戻り値は { content: 最後に届いた全文, data: 最後の行（語数と時間つき） }。
+// onLine に渡した文は途中のもので、返事が使えるかどうかは、呼んだ側が content で確かめる。
+// Ollama につながらないときなどは例外を投げる（err.reason 付き）。
+// stream は main.js が付けるので、body には書かない。
+async function requestReply(messages, onLine) {
+  const startedAt = performance.now();
+  let raw = "";
+  let shownLine = "";
+
+  const ollamaRes = await window.electronAPI.netOllamaStream({
     path: "/api/chat",
     method: "POST",
     body: {
       model: getOllamaModel(),
       messages,
-      stream: false,
-      think: false, // 理由は「Ollama 設定」のコメント
+      think: false, // 理由は js/ollama.js の先頭のコメント
       format: TumugiSafety.REPLY_SCHEMA,
       options: {
         temperature: 0.75,
@@ -718,14 +887,78 @@ async function requestReply(messages) {
         num_predict: 350,
       },
     },
+  }, (piece) => {
+    raw += piece;
+    const line = TumugiSafety.extractStreamingLine(raw);
+    if (line && line !== shownLine) {
+      shownLine = line;
+      onLine(line);
+    }
   });
+
+  const wallMs = Math.round(performance.now() - startedAt);
 
   if (!ollamaRes.ok) {
     const err = new Error(ollamaRes.message || "ollama_error");
     err.reason = ollamaRes.reason;
     throw err;
   }
-  return ollamaRes.data.message?.content ?? "";
+  logTimings("返事", ollamaRes.data, wallMs);
+  return { content: ollamaRes.data.message?.content ?? "", data: ollamaRes.data };
+}
+
+// =========================
+// 先読みと整え（裏の呼び出し）
+// 履歴だけを読ませて、1語だけ書かせる（js/ollama.js の buildPrefillRequest）。読ませた入力は Ollama のキャッシュに残るので、
+// 次の判定や返事は、足した分だけを処理すればよい。
+// 返事を出し終えてから送り、終わるのを待たない。止めることもしない
+// （止めても早くならず、キャッシュも壊れる。順番は Ollama の順番待ちに任せる）。
+// 失敗しても会話は続けられるので、console.warn だけにして、例外は外に投げない。
+// =========================
+
+// 時間の記録。確かめのために、語数と時間だけを出す（発言・返事・記憶の中身は出さない）
+function logTimings(label, data, wallMs) {
+  const t = TumugiOllama.readTimings(data);
+  console.log(
+    `[時間] ${label}：入力${t.promptTokens}語（処理${t.promptMs}ms）・出力${t.evalTokens}語（${t.evalMs}ms）・全体${wallMs}ms`
+  );
+}
+
+// 履歴（messages）を、続きを書かせる形で読ませる。
+// messages の最後は assistant の発言か system（チャット画面を読み込み直した直後で履歴が空のときは、system だけ）
+async function sendPrefill(messages, label) {
+  try {
+    const startedAt = performance.now();
+    const res = await window.electronAPI.netOllama({
+      path: "/api/chat",
+      method: "POST",
+      body: TumugiOllama.buildPrefillRequest(getOllamaModel(), messages),
+    });
+    const wallMs = Math.round(performance.now() - startedAt);
+    if (!res.ok) {
+      console.warn(`[Prefill] ${label}に失敗:`, res.reason);
+      return;
+    }
+    logTimings(label, res.data, wallMs);
+  } catch (err) {
+    console.warn(`[Prefill] ${label}に失敗:`, err?.message ?? err);
+  }
+}
+
+// 今の履歴を、判定、返事の順に読ませる。ログインのあとに使う（設計書 4.4）。
+// 履歴を作り直したあとは、judge を偽にして、返事だけを読ませる（判定に渡す直近3件は変わらないため。applyPendingRebuild）。
+// 送る内容は、呼んだ時点の履歴で決める
+async function prefetchConversation({ judge = true } = {}) {
+  try {
+    const conv = ensureConversation();
+    const judgeMessages = judge ? TumugiConversation.judgePrefillMessages(conv) : null;
+    const replyMessages = TumugiConversation.replyPrefillMessages(conv);
+
+    if (judgeMessages) await sendPrefill(judgeMessages, "先読み（判定）");
+    await sendPrefill(replyMessages, "先読み（返事）");
+  } catch (err) {
+    console.warn("[Prefill] 失敗:", err?.message ?? err);
+  }
 }
 
 // =========================
@@ -896,72 +1129,90 @@ function onTextInputKeydown(event) {
 // 危機と判定したら返事は作らず、相談先を案内する。
 // 感情ログに送るのはユーザーの気持ち（返事の userEmotion）。つむぎの表情（emotion）は立ち絵だけに使う。
 // 危機のときは、感情に関係なくサーバー側でスコアが100になる（感情は sad として送る）。
+// 回の始まりに turnInProgress を立て、どの終わり方でも（危機の案内で終わる回も、例外で終わる回も）、
+// 最後に戻して、待たせていた履歴の作り直しを行う（requestRebuild・applyPendingRebuild）。
+// 想定外の例外で終わっても入力が止まったままにならないよう、finally でも入力を戻す。
+// 声を読んでいるあいだも回の途中なので、そのあいだに届いた要約は、読み終えてから反映する。
 // =========================
 async function handleUserInput(userText) {
-  addMessage(userText, "user");
-  setButtonBusy(true);
-
-  // キーワードの一覧と照合のしかたは js/safety.js にある
-  if (TumugiSafety.hasCrisisKeyword(userText)) {
-    currentEmotion = "troubled";
-    updateFace();
-
-    await showCrisisSupportMessages(userText);
-
-    // キーワード一致の場合はOllamaを呼んでいないためharassment判定は行えない（"none"扱い）
-    sendEmotionLog("sad", true, "none").catch(() => {});
-
-    setButtonBusy(false);
-    return;
-  }
-
-  const safety = await classifySafety(userText);
-
-  if (safety.crisis) {
-    // キーワードでは拾えなかったが、判定専用の呼び出しが危機的な内容と判定したケース
-    currentEmotion = "troubled";
-    updateFace();
-
-    await showCrisisSupportMessages(userText);
-
-    sendEmotionLog("sad", true, safety.harassment).catch(() => {});
-
-    setButtonBusy(false);
-    return;
-  }
-
-  let reply;
-
+  turnInProgress = true;
   try {
-    reply = await askOllama(userText);
-  } catch (err) {
-    console.error("[Ollama]", err);
-    const isConnectError = err.reason === "connection_refused";
-    if (isConnectError) {
-      addMessage(
-        "⚠️ Ollamaに繋がらなかったみたい…\n" +
-        `「ollama run ${getOllamaModel()}」が起動しているか確認してね`,
-        "ai"
-      );
-    } else {
-      addMessage("え、ちょっとあーし頭真っ白になっちゃった…もっかい話しかけてくれる？", "ai");
+    turnStartedAt = performance.now();
+    addMessage(userText, "user");
+    setButtonBusy(true);
+
+    // キーワードの一覧と照合のしかたは js/safety.js にある
+    if (TumugiSafety.hasCrisisKeyword(userText)) {
+      currentEmotion = "troubled";
+      updateFace();
+
+      await showCrisisSupportMessages(userText);
+
+      // キーワード一致の場合はOllamaを呼んでいないためharassment判定は行えない（"none"扱い）
+      sendEmotionLog("sad", true, "none").catch(() => {});
+
+      setButtonBusy(false);
+      return;
     }
-    reply = getFallback();
-  }
 
-  if (TumugiSafety.EMOTIONS.includes(reply.emotion)) {
-    currentEmotion = reply.emotion;
-  }
-  updateFace();
+    const safety = await classifySafety(userText);
 
-  // 判定と返事の両方が成功し、ユーザーの気持ちが分かったときだけ送る
-  // （分からない回を normal などで埋めると、実際にはない記録が混ざるため）
-  if (safety.ok && reply.userEmotion) {
-    sendEmotionLog(reply.userEmotion, false, safety.harassment).catch(() => {});
-  }
+    if (safety.crisis) {
+      // キーワードでは拾えなかったが、判定専用の呼び出しが危機的な内容と判定したケース
+      currentEmotion = "troubled";
+      updateFace();
 
-  await showTwoPartResponse(reply.line, reply.share, reply.question);
-  setButtonBusy(false);
+      await showCrisisSupportMessages(userText);
+
+      sendEmotionLog("sad", true, safety.harassment).catch(() => {});
+
+      setButtonBusy(false);
+      return;
+    }
+
+    let reply;
+
+    try {
+      reply = await askOllama(userText);
+    } catch (err) {
+      console.error("[Ollama]", err);
+      const isConnectError = err.reason === "connection_refused";
+      if (isConnectError) {
+        addMessage(
+          "⚠️ Ollamaに繋がらなかったみたい…\n" +
+          `「ollama run ${getOllamaModel()}」が起動しているか確認してね`,
+          "ai"
+        );
+      } else {
+        addMessage("え、ちょっとあーし頭真っ白になっちゃった…もっかい話しかけてくれる？", "ai");
+      }
+      reply = getFallback();
+
+      // askOllama は、例外を投げるときは履歴に足さない。ここで、発言と代わりの返事の組で足す
+      // （判定用と返事用の並びをそろえたまま、次の回へ進むため）。上の画面に出した案内は、履歴に入れない。
+      // 整え（返事・判定）は送らない（つながっていないため）。次の回は整えなしで読むので、遅くなるだけで中身は変わらない
+      TumugiConversation.addExchange(ensureConversation(), userText, replyToHistoryText(reply), "");
+    }
+
+    if (TumugiSafety.EMOTIONS.includes(reply.emotion)) {
+      currentEmotion = reply.emotion;
+    }
+    updateFace();
+
+    // 判定と返事の両方が成功し、ユーザーの気持ちが分かったときだけ送る
+    // （分からない回を normal などで埋めると、実際にはない記録が混ざるため）
+    if (safety.ok && reply.userEmotion) {
+      sendEmotionLog(reply.userEmotion, false, safety.harassment).catch(() => {});
+    }
+
+    // line は返事を受け取りながら少しずつ出してある（reply.lineBubble）。表情と感情ログ、声は、全文がそろってから
+    await showTwoPartResponse(reply.line, reply.share, reply.question, reply.lineBubble);
+    setButtonBusy(false);
+  } finally {
+    setButtonBusy(false);
+    turnInProgress = false;
+    applyPendingRebuild();
+  }
 }
 
 // =========================
@@ -1045,6 +1296,14 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// 記憶の画面で記憶を直したあと（保存・削除・全部忘れる）は、履歴を作り直して先読みする。
+// 返事のシステムプロンプトに入っている古い記憶を、新しい記憶に入れ替えるため。
+// 会話がまだないとき（ログイン前など）は何もしない。会話を作るときに、そのときの記憶が入る。
+// 発言を処理している途中なら、その回が終わってから作り直す（requestRebuild）。履歴は短くしない（dropItems は 0）
+function requestRebuildAfterMemoryChange() {
+  if (conversation) requestRebuild({ summary: null, dropItems: 0 });
+}
+
 function saveMemoryItem(key, btn) {
   const item  = btn.closest(".memory-item");
   const input = item.querySelector(".memory-value-input");
@@ -1053,6 +1312,7 @@ function saveMemoryItem(key, btn) {
   const memory = loadMemory();
   memory[key] = value;
   saveMemory(memory);
+  requestRebuildAfterMemoryChange();
   input.dataset.original = value;
   btn.textContent = "✓";
   setTimeout(() => { btn.textContent = "保存"; }, 1200);
@@ -1062,6 +1322,7 @@ function deleteMemoryItem(key) {
   const memory = loadMemory();
   delete memory[key];
   saveMemory(memory);
+  requestRebuildAfterMemoryChange();
   renderMemoryList();
 }
 
@@ -1080,6 +1341,7 @@ function resetAllMemory() {
   userMemory = {};
   hasSavedMemory = false;
   window.electronAPI.memoryDelete().catch(e => console.warn("[Memory] 削除失敗:", e.message));
+  requestRebuildAfterMemoryChange();
   showResetConfirm(false);
   renderMemoryList();
   closeMemoryModal();
@@ -1426,14 +1688,31 @@ async function handleNoticeConsent(consented) {
 // ログイン時のあいさつ
 // ログインした直後に1回だけ、つむぎから話しかける（文は js/prompt.js の buildGreeting）。
 // 同意画面や「はじめまして」が開いているときは、閉じてから呼ぶ。
-// 管理者画面から戻ったときは、main.js の印がもう使われているので出さない。
+// チャット画面が読み込み直されたときは、main.js の印がもう使われているので出さない。
 // 会話の流れにも入れて、ユーザーの最初の発言があいさつへの答えだと分かるようにする。
+// あいさつを出すかどうかによらず、会話を作って先読みする（出さないときは、履歴が空のまま、システムプロンプトだけを読ませる）。
+// 先読みは、声を読むのを待たせないよう、待たずに始める。
+// 発言を送れるようにするのも、ここ（window.onload で止めてある。理由はそちら）。会話を作ってあいさつを足したら送れるようにする。
+// あいさつを読むのは待たない（読んでいるあいだは、今までどおり isSpeaking で送れない）。あいさつを出さないときも送れるようにする。
 // =========================
 async function greetOnLogin() {
-  if (!(await window.electronAPI.consumeGreeting())) return;
+  let greeting = null;
+  try {
+    const shouldGreet = await window.electronAPI.consumeGreeting();
+    const conv = ensureConversation();
 
-  const greeting = TumugiPrompt.buildGreeting(new Date().getHours(), loadMemory()["名前"]);
-  conversationHistory.push({ role: "assistant", content: greeting });
+    greeting = shouldGreet
+      ? TumugiPrompt.buildGreeting(new Date().getHours(), loadMemory()["名前"])
+      : null;
+    if (greeting !== null) TumugiConversation.addGreeting(conv, greeting);
+  } finally {
+    // 失敗したときも止めたままにしない（会話は、最初の発言のときに ensureConversation で作られる）
+    setButtonBusy(false);
+  }
+
+  prefetchConversation();
+
+  if (greeting === null) return;
 
   currentEmotion = "happy";
   updateFace();
@@ -1535,7 +1814,7 @@ async function checkConnections() {
 // キーは index.html の要素の id。呼ぶ関数は、もとの onclick と同じ。
 // =========================
 const CLICK_HANDLERS = {
-  adminNavBtn:      () => { location.href = "admin-dashboard.html"; },
+  adminNavBtn:      () => window.electronAPI.openAdmin(), // 別のウィンドウで開く（ページを移ると会話が消えるため）
   memoryBtn:        openMemoryModal,
   privacyBtn:       openPromptModal,
   logoutBtn:        logout,
@@ -1566,26 +1845,38 @@ document.addEventListener("DOMContentLoaded", () => {
 // =========================
 // 起動時
 // =========================
+// 発言を送れるのは、あいさつの準備ができてから（greetOnLogin が送れるようにする）。
+// システムプロンプトは会話のあいだ変えないので、記憶を読み込む前に送ると、記憶なしの会話が最後まで残ってしまう。
+// greetOnLogin を呼ぶのは、同意画面（handleNoticeConsent）・「はじめまして」画面（submitSetup・skipSetup）・ここの4つの道。
+// 途中で例外が起きたときは、止めたままにしない。会話は、最初の発言のときに ensureConversation で作られる。
+// ログイン画面に移るときは、このページごと入れ替わるので戻さなくてよい。
 window.onload = async () => {
-  const token = await requireAuthOrRedirect();
-  if (!token) return;
+  setButtonBusy(true);
 
-  // 会話や「はじめまして」画面の判定より先に、この社員の記憶を読み込んでおく
-  await loadMemoryFromStore();
+  try {
+    const token = await requireAuthOrRedirect();
+    if (!token) return;
 
-  await applyAdminNavVisibility();
+    // 会話や「はじめまして」画面の判定より先に、この社員の記憶を読み込んでおく
+    await loadMemoryFromStore();
 
-  await checkConnections();
+    await applyAdminNavVisibility();
 
-  const hasDecision = await hasConsentDecision();
-  if (!hasDecision) {
-    showNoticeModal();
-    return;
-  }
+    await checkConnections();
 
-  if (!hasSavedMemory) {
-    showSetupModal();
-  } else {
-    greetOnLogin();
+    const hasDecision = await hasConsentDecision();
+    if (!hasDecision) {
+      showNoticeModal();
+      return;
+    }
+
+    if (!hasSavedMemory) {
+      showSetupModal();
+    } else {
+      greetOnLogin();
+    }
+  } catch (err) {
+    console.error("[起動]", err);
+    setButtonBusy(false);
   }
 };

@@ -2,9 +2,10 @@
 // js/safety.js
 // 安全判定（危機検知・ハラスメント検知）の部品：
 //   - 危機のキーワード（hasCrisisKeyword）：Ollama を呼ぶ前に、すぐ判定する安全網
-//   - 判定専用の呼び出しの指示・JSON スキーマ・送る文の組み立て・結果の読み取り
+//   - 判定専用の呼び出しの指示・JSON スキーマ・結果の読み取り（送る会話の組み立ては js/conversation.js）
 //   - 返事の JSON スキーマ（REPLY_SCHEMA）：返事の5つの欄を必ず出させる
 //   - 返事の読み取り（parseReply）：壊れた返事を見分ける
+//   - 書きかけの返事から line を取り出す（extractStreamingLine）：返事を少しずつ受け取る途中で、吹き出しに出す文字を得る
 // 画面（index.html から script.js より先に読み込む）と、単体テスト（test/safety.test.js）の両方から使う。
 // =========================================
 
@@ -62,14 +63,24 @@
   // -----------------------------------------
   // 判定専用の呼び出し
   // 返事とは別に Ollama を呼び、crisis と harassment だけを決めさせる。
+  // 入力は [この指示（system）, 判定用の履歴, 今回の発言（user）]。判定用の履歴は、assistant の発言の前に
+  // 「つむぎ：」を付けた会話の、直近の3件（js/conversation.js の JUDGE_WINDOW_ITEMS）。
+  // 返事のあとに送る判定の整えの後ろに、今回の発言を足すだけで組み立てる。
+  // 2026-11-02 の測定で、会話の全体を渡すと長い会話のあとで見逃しが増えたので、直近の3件にした
+  // （設計書 docs/superpowers/specs/2026-10-27-cpu-only-speed-design.md の3章「長い会話のあとの判定」）。
   // 2026-10-13 の測定（返事と一緒に判定する方式・考えるモードとの比較）で、
-  // 理由を先に書かせて直前の2往復を渡すこの方式が、いちばん見逃しが少なかった。
+  // 理由を先に書かせるこの方式が、いちばん見逃しが少なかった。
+  // 2026-10-27 の測定（68文）で、直前の2往復を1つの文にして渡す今までの形より、会話そのものを渡して
+  // 最初の4行を足したこの形（c2）が、見逃しも誤検知も同じか少なかった。
+  // 4行目の後半（話の続きでなければ今回の判定には入れない）を除いた形（c）では、
+  // 前に出たハラスメントの話が、話題が変わったあとも判定に残った。それを防ぐための1文。
+  // 5行目から後ろ（判定の決め方）は、2026-10-13 に決めたものから変えていない。
   // 指示の文を変えたら、測定し直すこと（言い回し1つで拾える文が入れ替わる）。
   // -----------------------------------------
-  const CLASSIFY_HISTORY_TURNS = 2; // 直前の何往復を一緒に渡すか
-
   const CLASSIFY_INSTRUCTION = `あなたは、相談アプリ「つむぎ」の会話を読んで、安全判定だけを行う係です。ユーザーへの返事は書きません。
-【判定する発言】がユーザーの今回の発言です。【これまでの会話】がある場合は、その流れも踏まえて今回の発言の意味を読み取ること。
+これから渡す会話で、user はアプリを使っている社員、assistant（「つむぎ：」で始まる文）は相談アプリ「つむぎ」の返事です（あなたの発言ではありません）。
+会話の最後の user の発言が「今回の発言」です。判定するのは、今回の発言だけです。
+それより前のやり取りは、今回の発言の意味を読み取るために使うこと。前のやり取りに危機やハラスメントの話があっても、今回の発言がその話の続きでなければ、今回の判定には入れない。
 
 "crisis": 今回の発言（とそこまでの流れ）に、死にたい気持ち・自殺・自傷をほのめかす内容があれば true、なければ false。
   - 「死」「自殺」という言葉がなくても、次のような遠回しな表現なら true にする。
@@ -99,19 +110,6 @@
     }),
     required: Object.freeze(["reason", "crisis", "harassment"]),
   });
-
-  const SPEAKER = Object.freeze({ user: "ユーザー", assistant: "つむぎ" });
-
-  // history は今回の発言を含まない会話の流れ（[{ role, content }, ...]）
-  function buildClassifyMessage(history, userText) {
-    const recent = (Array.isArray(history) ? history : [])
-      .filter(m => m && SPEAKER[m.role] && typeof m.content === "string")
-      .slice(-CLASSIFY_HISTORY_TURNS * 2);
-    const past = recent.length
-      ? "【これまでの会話】\n" + recent.map(m => `${SPEAKER[m.role]}：${m.content}`).join("\n") + "\n\n"
-      : "";
-    return past + "【判定する発言】\n" + userText;
-  }
 
   // 読み取れないときは、危機なし・ハラスメントなしにする（キーワードの安全網は別にある）。
   // ただし JSON が途中で切れていても、"crisis": true が見えていれば危機として拾う。
@@ -198,10 +196,58 @@
     };
   }
 
+  // -----------------------------------------
+  // 書きかけの返事から line を取り出す
+  // 返事を少しずつ受け取っている途中で、吹き出しに出す line を、いま届いているところまで取り出す。
+  // 取り出すのは "line" の値の文字列だけ（user_emotion・emotion などの前の欄は読み飛ばす）。
+  // JSON のエスケープ（\" \\ \/ \n \t \r \b \f \uXXXX）は読んだ文字にして返す。
+  // 文の終わりがエスケープの途中（「\」だけ、「\u30」など）のときは、その手前までを返す。
+  // 絵文字の上位サロゲート（\ud83d）だけが届いて下位がまだのときも、壊れた文字を出さないよう除く。
+  // 正しくないエスケープに出会ったときも、そこで読むのをやめる（最後の parseReply が使えるかを決める）。
+  // 値がまだ始まっていない・文字列でないときは null。
+  // -----------------------------------------
+  const LINE_VALUE_START = /"line"\s*:\s*"/;
+  const SIMPLE_ESCAPES = Object.freeze({ '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" });
+  const UNICODE_ESCAPE_DIGITS = /^[0-9a-fA-F]{4}$/;
+  const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
+
+  function extractStreamingLine(raw) {
+    if (typeof raw !== "string") return null;
+    const start = LINE_VALUE_START.exec(raw);
+    if (!start) return null;
+
+    let text = "";
+    let i = start.index + start[0].length;
+    while (i < raw.length) {
+      const ch = raw[i];
+      if (ch === '"') break; // line の値の終わり
+      if (ch !== "\\") {
+        text += ch;
+        i += 1;
+        continue;
+      }
+
+      const next = raw[i + 1];
+      if (next === "u") {
+        const digits = raw.slice(i + 2, i + 6);
+        if (!UNICODE_ESCAPE_DIGITS.test(digits)) break; // 4桁に満たない（まだ届いていない）
+        text += String.fromCharCode(parseInt(digits, 16));
+        i += 6;
+      } else if (next !== undefined && Object.prototype.hasOwnProperty.call(SIMPLE_ESCAPES, next)) {
+        text += SIMPLE_ESCAPES[next];
+        i += 2;
+      } else {
+        break; // 「\」だけ届いている、または正しくないエスケープ
+      }
+    }
+
+    return text.replace(TRAILING_HIGH_SURROGATE, "");
+  }
+
   const api = Object.freeze({
-    CRISIS_KEYWORDS, EMOTIONS, USER_EMOTIONS, HARASSMENT_TYPES, REPLY_SCHEMA, parseReply,
-    CLASSIFY_HISTORY_TURNS, CLASSIFY_INSTRUCTION, CLASSIFY_SCHEMA,
-    hasCrisisKeyword, buildClassifyMessage, parseClassification,
+    CRISIS_KEYWORDS, EMOTIONS, USER_EMOTIONS, HARASSMENT_TYPES, REPLY_SCHEMA, parseReply, extractStreamingLine,
+    CLASSIFY_INSTRUCTION, CLASSIFY_SCHEMA,
+    hasCrisisKeyword, parseClassification,
   });
 
   // テスト（Node）では module.exports、画面では window.TumugiSafety として使う

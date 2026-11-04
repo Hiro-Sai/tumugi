@@ -1,31 +1,16 @@
 <?php
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/admin_guard.php';
 setCorsHeaders();
 
-$employeeId = verifyToken();
-if ($employeeId === null) {
-    http_response_code(401);
-    echo json_encode(['error' => '認証が必要です']);
-    exit;
-}
+// -----------------------------------------
+// 管理者権限チェック（includes/admin_guard.php）
+// is_admin=1 かつ is_active=1 の社員のみダッシュボードを閲覧できる。
+// 通らなければ、401（認証が必要です）か 403（この機能を利用する権限がありません）でここで終わる。
+// -----------------------------------------
+requireAdmin();
 
 $pdo = getDbConnection();
-
-// -----------------------------------------
-// 管理者権限チェック
-// is_admin=1 かつ is_active=1 の社員のみダッシュボードを閲覧できる。
-// -----------------------------------------
-$adminCheckStmt = $pdo->prepare(
-    "SELECT is_admin FROM employees WHERE id = :id AND is_active = 1"
-);
-$adminCheckStmt->execute(['id' => $employeeId]);
-$adminRow = $adminCheckStmt->fetch();
-
-if (!$adminRow || (int)$adminRow['is_admin'] !== 1) {
-    http_response_code(403);
-    echo json_encode(['error' => 'この機能を利用する権限がありません']);
-    exit;
-}
 
 // -----------------------------------------
 // 個人特定の対策：

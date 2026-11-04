@@ -18,8 +18,10 @@
   const NOTE_SEPARATOR = "\n\n（ここから下はつむぎへの指示で、ユーザーの発言ではない）";
 
   // 記憶の抽出は、この往復数がたまるごとに、まとめて1回行う。
-  // 毎回行うと、判定・返事・抽出の3種類の入力で Ollama のキャッシュを奪い合い、
-  // どれのキャッシュも効かなくなるため（Ollama が覚えておける入力は2つまで）。
+  // 抽出の呼び出しを減らして、そのあいだ判定と返事が待たされる時間を短くするため（とくに CPU だけの PC）。
+  // 前は「判定・返事・抽出の入力で Ollama のキャッシュを奪い合い、どれも効かなくなる」ことを理由にしていたが、
+  // Ollama 0.40.11 は読ませた入力のキャッシュを何件も持てるので、その奪い合いはほぼ起きない
+  // （docs/superpowers/specs/2026-10-27-cpu-only-speed-design.md の3章）。
   const MEMORY_EXTRACT_EVERY = 3;
 
   function withDynamicNote(userText, note) {
