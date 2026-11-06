@@ -24,6 +24,97 @@
   // （docs/superpowers/specs/2026-10-27-cpu-only-speed-design.md の3章）。
   const MEMORY_EXTRACT_EVERY = 3;
 
+  // ユーザーの気持ち（TumugiSafety.USER_EMOTIONS）の呼び名
+  const EMOTION_LABEL = Object.freeze({
+    happy: "嬉しい", normal: "普通", tired: "疲れ",
+    anxious: "不安", angry: "怒り・いらだち", sad: "悲しい・落ち込み",
+  });
+
+  // 気持ちが同じ向きで続いているか（新しい順の配列）。normal や1回だけなら null
+  function detectEmotionStreak(userEmotions) {
+    if (userEmotions.length < 2) return null;
+    const latest = userEmotions[0];
+    if (latest === "normal") return null;
+
+    let streak = 1;
+    for (let i = 1; i < userEmotions.length; i++) {
+      if (userEmotions[i] === latest) streak++;
+      else break;
+    }
+    if (streak >= 2) return { emotion: latest, streak };
+    return null;
+  }
+
+  // 文末の3文字。「…」「。」「！」などは除いてから取る（「んだね」と「んだね…」を同じ終わり方として扱うため）
+  function extractLineEnding(line) {
+    if (!line) return "";
+    const trimmed = line.trim().replace(/[…。.．！!〜~\s]+$/u, "");
+    return trimmed.slice(-3);
+  }
+
+  // 動的ノート（感情の流れ・言い方の重複回避）。毎回変わるので、発言の後ろに付ける（withDynamicNote）
+  // recentReplies：{ line, share, question } の配列（新しい順、最大3件）。ない欄は "" として扱う
+  // userEmotions：ユーザーの気持ちの配列（新しい順、最大5件）
+  function buildDynamicNote({ recentReplies = [], userEmotions = [] } = {}) {
+    let note = "";
+
+    const streak = detectEmotionStreak(userEmotions);
+    if (streak) {
+      const label = EMOTION_LABEL[streak.emotion] || streak.emotion;
+      note += `
+【感情の流れに注意】
+直近${streak.streak}回連続でユーザーの感情が「${label}」傾向。一時的な気分ではなく根深い悩みかもしれない。
+いつもより一段深く受け止め、気持ちの想像をより丁寧に行うこと。`;
+    }
+
+    // 欄が足りない返事（代わりの返事など）でも動くように、ない欄は "" にそろえる
+    const replies = recentReplies.map(x => ({
+      line: (x && x.line) || "",
+      share: (x && x.share) || "",
+      question: (x && x.question) || "",
+    }));
+
+    if (replies.length > 0) {
+      const endings = replies.map(x => `「…${extractLineEnding(x.line)}」`).join("");
+      note += `
+【言い方の重複回避】
+直近のlineの終わり方は ${endings} だった。今回はこれらと違う終わり方・違う受け止め方にすること。`;
+
+      // 指示では「感じ」を使わない。破ったときの歯止めとして、直近2回の line か question で使っていたら念を押す
+      if (replies.slice(0, 2).some(x => x.line.includes("感じ") || x.question.includes("感じ"))) {
+        note += `
+直近で「感じ」を使ったので、今回は line でも question でも「感じ」を使わないこと。`;
+      }
+
+      // 気持ちを当てにいく言い方（「〜な感じかな？」「〜ったりする？」）が続かないようにする
+      const lastText = replies[0].line + replies[0].question;
+      if (/(感じ|感覚|ったりする|思っちゃった|近い|ってこと)[^。！!、]{0,4}(かな|[？?])/.test(lastText)) {
+        note += `
+前回は気持ちを想像して問いかけたので、今回は別の受け止め方にすること。`;
+      }
+
+      // 気づかいの一言（「暖かくしてね」など）が続かないようにする。share も見る
+      const recentText = replies.slice(0, 2).map(x => x.line + x.share + x.question).join("");
+      if (/(暖か|あったか|温か|休んで|休もう|寝てね|寝よう|気をつけ|無理し|お大事|水分|とってね|食べてね|冷やさ)/.test(recentText)) {
+        note += `
+直近で気づかいの一言を言ったので、今回は気づかい以外の返し方（反応・受け止め・問いかけ）にすること。お礼やあいさつには、まずそれに返すこと。`;
+      }
+
+      // 問いかけが「今日は〜？」で続かないようにする（直近2回を見る）
+      // question：中のどれかの文の頭（先頭か「、」「。」「！」「…」・空白のあと）が「今日」なら当たる。「？」は要らない
+      // line：文の頭の「今日」から終わりまで「、」「。」「！」「…」がなく、「？」で終わるなら当たる
+      // （2026-11-06 の測定で、軽いひと言の問いかけの半分近くが「今日」で始まっていた）
+      const asksAboutToday = (x) =>
+        /(^|[、。！!…\s])今日/u.test(x.question) || /(^|[、。！!…\s])今日[^、。！!…]*[？?]\s*$/u.test(x.line);
+      if (replies.slice(0, 2).some(asksAboutToday)) {
+        note += `
+直近の問いかけを「今日」で始めたので、今回は「今日」で始めず、別のことを聞くこと。`;
+      }
+    }
+
+    return note;
+  }
+
   function withDynamicNote(userText, note) {
     return note ? userText + NOTE_SEPARATOR + note : userText;
   }
@@ -72,7 +163,8 @@ JSON形式のみ出力。説明文不要。
   }
 
   const api = Object.freeze({
-    NOTE_SEPARATOR, MEMORY_EXTRACT_EVERY,
+    NOTE_SEPARATOR, MEMORY_EXTRACT_EVERY, EMOTION_LABEL,
+    extractLineEnding, buildDynamicNote,
     withDynamicNote, stripPlaceholders, buildReplySystemPrompt, buildMemoryPrompt, buildGreeting,
   });
 

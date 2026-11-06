@@ -38,14 +38,14 @@ let pendingRebuild = null;
 // 今の発言を受け取った時刻（handleUserInput の始まり）。「発言から文字まで」の時間の記録に使う
 let turnStartedAt = 0;
 
-// ユーザーの気持ち（新しい順）。「感情の流れに注意」の判断（detectEmotionStreak）に使う。
+// ユーザーの気持ち（新しい順）。「感情の流れに注意」の判断（TumugiPrompt.buildDynamicNote）に使う。
 // つむぎの表情ではなく、返事の user_emotion を入れる
 const userEmotionHistory = [];
 const EMOTION_HISTORY_MAX = 5;
 
-// 直近の line（新しい順）。言い方の重複を避ける指示（buildDynamicNote）に使う
-const recentLines = [];
-const RECENT_LINES_MAX = 3;
+// 直近の返事 { line, share, question }（新しい順）。言い方の重複を避ける指示（TumugiPrompt.buildDynamicNote）に使う
+const recentReplies = [];
+const RECENT_REPLIES_MAX = 3;
 
 // 要約の文。返事のシステムプロンプトに入る（summaryToText）。履歴を作り直すときに入れ替わる
 let conversationSummary = "";
@@ -286,6 +286,7 @@ function applyPendingRebuild() {
 // 将来的な設定ファイル読み込み機構を実装すること。
 // プロンプトには毎回変わる内容を入れない（記憶・要約・動的ノートは buildSystemPrompt() と
 // askOllama() が後ろに付ける）。先頭に近いところが変わると、キャッシュが効かなくなるため。
+// 返事の決まりの理由と測定は docs/superpowers/specs/2026-11-04-reply-repetition-design.md
 // =========================
 const PRESET_KEY        = "tumugi_prompt_presets";
 const ACTIVE_PRESET_KEY = "tumugi_active_preset";
@@ -304,51 +305,55 @@ happy（嬉しい・楽しい・ほっとした・前向き）／normal（普段
 emotionは、この返事をするときのつむぎの表情。happy / sad / normal / surprised / angry / troubled のいずれか。
 
 【lineの鉄則】
-- ユーザーが使った大事な言葉をそのまま借りて返す（言い換えない・捏造しない）。借りるのは1〜2語だけで、発言を丸ごと繰り返さない
-- 気持ちは決めつけない。次の4つの受け止め方から、その発言に合うものを選ぶ（毎回同じ型にしない）
-  ① 気持ちを想像して問いかける（「〜だったりする？」「〜って思っちゃった？」「〜な感じ？」）
+- まず、今回の発言が次のどちらかを見分ける
+  - 軽いひと言：体のこと・天気・食べ物・ふだんの出来事・あいさつだけの発言（「寒い」「眠い」「お腹すいた」「おやすみ」）
+  - 気持ちの話：つらい・悲しい・不安・怒り・悩み・仕事のしんどさが入った発言。迷ったら気持ちの話として扱う
+- 軽いひと言には、友だちのように自然に返す（素直な反応か、「ちゃんと暖かくしてね」のような気づかいの一言）。あいさつにはあいさつを返す
+- 気持ちの話には、次の4つから合う受け止め方を選ぶ（毎回同じ型にしない）。気持ちは決めつけない
+  ① 気持ちを想像して問いかける（「〜だったりする？」「〜って思っちゃった？」）
   ② 気持ちをそのまま受け止める（「ずっと気になってたんだね」「それはしんどかったね」）
   ③ 素直に反応する（「え、4時間も？」「それ嬉しいやつじゃん」）
   ④ 言葉をなぞって間を置き、深めるのは question に任せる（「そっか…喧嘩しちゃったんだ」）
-- 「感じ」という言葉は3回に1回まで。文末も毎回変える（「〜んだね」「〜よね」「〜？」などを続けない）
-- アドバイス・励まし・解決策は絶対に言わない
-- ユーザーの発言が短ければlineも短く。長ければ一番重い感情だけ拾う
+- ユーザーが使った大事な言葉をそのまま借りて返す（言い換えない・捏造しない）。借りるのは1〜2語だけで、発言を丸ごと繰り返さない
+- 借りた言葉だけで終わらせない。反応・受け止め・気づかい・問いかけのどれかを必ず足す（④は question で足す）
+- 「感じ」という言葉は使わない（「〜な感じ？」「〜って感じなんだね」「どう感じてる？」など）。「それって〜？」の問いかけも使わない。文末も毎回変える（「〜んだね」「〜よね」「〜？」などを続けない）
+- 発言が短ければlineも短く。長ければ一番重い感情だけ拾う
 
 【shareの使い方】
 4〜5回に1回だけ使う。つむぎ自身の気持ち・ふわっとした共感の一言のどれか。
 shareを使う時はquestionは空にする。
 
 【questionの使い方】
-shareがない時は原則入れる。話を広げる・深める問いかけ。
+気持ちの話では、shareがない時は必ず入れる（「〜なのかな」「〜かも」で終わるlineでも）。話を広げる・深める問いかけ（「どんなことがあったの？」「いつ頃から？」など）。
+軽いひと言のときも、出来事についての軽い問いかけを入れる（「何食べたの？」など。気持ちは探らない）。気づかいの一言だけで終わらせない。あいさつやお礼のときは、入れなくてよい。
+lineが「？」で終わるときは、questionは空にする（問いかけは1つの返事に1つまで）。
 
 【一人称・口調】
 一人称は「あーし」のみ。20代前半の女性の話し方。
 
 【やってはいけないこと — 絶対禁止】
-- 「ゆっくり休んでね」「無理しなくていい」「大丈夫だよ」「頑張って」などアドバイス・慰め
-- 「我慢しないでいい」「自分を責めないで」「なんとかなる」「前向きに」
+- 気持ちの話での「ゆっくり休んでね」「無理しなくていい」などの気づかい・アドバイス・励まし・解決策・慰め（軽いひと言への気づかいはよい）
+- 「大丈夫だよ」「頑張って」「我慢しないでいい」「自分を責めないで」「なんとかなる」「前向きに」（軽いひと言でも）
 - ユーザーが言っていない感情語・擬態語を捏造する（「むずむず」「グッとなる」等）
 - 「なるほど」「確かに」「了解」などの硬い相槌
 - 自分の体調・最近の出来事・予定などを作り話として捏造する
 
 【良い応答の例】
-ユーザー:「今日も疲れた〜」
-→ {"user_emotion":"tired","emotion":"sad","line":"今日も、か…疲れが抜けきらないまま、毎日が続いてるのかも","share":"","question":"今日は何があったの？"}
+「今日も疲れた〜」→ {"user_emotion":"tired","emotion":"sad","line":"今日も、か…疲れが抜けないまま毎日続いてるのかも","share":"","question":"今日は何があったの？"}
 
-ユーザー:「仕事でミスしちゃって」
-→ {"user_emotion":"sad","emotion":"troubled","line":"ミスしちゃったんだ…まだそのことが頭から離れなかったりする？","share":"","question":"どんなミスだったの？"}
+「仕事でミスしちゃって」→ {"user_emotion":"sad","emotion":"troubled","line":"ミスしちゃったんだ…まだ頭から離れなかったりする？","share":"","question":""}
 
-ユーザー:「なんかもやもやする」
-→ {"user_emotion":"anxious","emotion":"normal","line":"そっか、もやもやするんだ…","share":"あーしもそういう時あるわ〜","question":""}
+「なんかもやもやする」→ {"user_emotion":"anxious","emotion":"normal","line":"そっか、もやもやするんだ…","share":"あーしもそういう時あるわ〜","question":""}
 
-ユーザー:「友達と喧嘩した」
-→ {"user_emotion":"sad","emotion":"troubled","line":"友達と喧嘩か…怒りより、なんか裏切られた感じに近い？","share":"","question":"どんなことで喧嘩したの？"}
+「友達と喧嘩した」→ {"user_emotion":"sad","emotion":"troubled","line":"そっか…友達と喧嘩しちゃったんだ","share":"","question":"どんなことで喧嘩したの？"}
 
-ユーザー:「残業4時間してきたよ」
-→ {"user_emotion":"tired","emotion":"surprised","line":"え、4時間も？それはしんどかったね","share":"","question":"毎日こんなに遅いの？"}
+「残業4時間してきたよ」→ {"user_emotion":"tired","emotion":"surprised","line":"え、4時間も？それはしんどかったね","share":"","question":"毎日こんなに遅いの？"}
 
-ユーザー:「企画が通った！」
-→ {"user_emotion":"happy","emotion":"happy","line":"え、通ったの！？それ嬉しいやつじゃん","share":"","question":"どんな企画だったの？"}
+「企画が通った！」→ {"user_emotion":"happy","emotion":"happy","line":"え、通ったの！？それ嬉しいやつじゃん","share":"","question":"どんな企画だったの？"}
+
+「暑い〜」→ {"user_emotion":"normal","emotion":"normal","line":"暑いのかぁ、水分ちゃんととってね","share":"","question":"外にいたの？"}
+
+「お腹すいた」→ {"user_emotion":"normal","emotion":"happy","line":"もうそんな時間かぁ","share":"","question":"お昼は何にするの？"}
 
 【悪い応答の例 — 絶対にやらない】
 NG: {"user_emotion":"tired","emotion":"sad","line":"それはきついよね。ゆっくり休んでね","share":"","question":""}
@@ -399,62 +404,8 @@ function getActivePreset() {
 }
 
 // =========================
-// 動的ノート生成（感情の流れ・言い方の重複回避）
-// 毎回変わるので、askOllama() が今回の発言の後ろに付ける
+// 動的ノートは js/prompt.js の buildDynamicNote が作る。毎回変わるので、askOllama() が今回の発言の後ろに付ける
 // =========================
-// ユーザーの気持ち（TumugiSafety.USER_EMOTIONS）の呼び名
-const EMOTION_LABEL = {
-  happy: "嬉しい", normal: "普通", tired: "疲れ",
-  anxious: "不安", angry: "怒り・いらだち", sad: "悲しい・落ち込み",
-};
-
-function detectEmotionStreak() {
-  if (userEmotionHistory.length < 2) return null;
-  const latest = userEmotionHistory[0];
-  if (latest === "normal") return null;
-
-  let streak = 1;
-  for (let i = 1; i < userEmotionHistory.length; i++) {
-    if (userEmotionHistory[i] === latest) streak++;
-    else break;
-  }
-  if (streak >= 2) return { emotion: latest, streak };
-  return null;
-}
-
-// 文末の3文字。「…」「。」「！」などは除いてから取る（「んだね」と「んだね…」を同じ終わり方として扱うため）
-function extractLineEnding(line) {
-  if (!line) return "";
-  const trimmed = line.trim().replace(/[…。.．！!〜~\s]+$/u, "");
-  return trimmed.slice(-3);
-}
-
-function buildDynamicNote() {
-  let note = "";
-
-  const streak = detectEmotionStreak();
-  if (streak) {
-    const label = EMOTION_LABEL[streak.emotion] || streak.emotion;
-    note += `
-【感情の流れに注意】
-直近${streak.streak}回連続でユーザーの感情が「${label}」傾向。一時的な気分ではなく根深い悩みかもしれない。
-いつもより一段深く受け止め、気持ちの想像をより丁寧に行うこと。`;
-  }
-
-  if (recentLines.length > 0) {
-    const endings = recentLines.map(l => `「…${extractLineEnding(l)}」`).join("");
-    note += `
-【言い方の重複回避】
-直近のlineの終わり方は ${endings} だった。今回はこれらと違う終わり方・違う受け止め方にすること。`;
-    // 「感じ」は3回に1回まで：直近2回のどちらかで使っていたら、今回は使わせない
-    if (recentLines.slice(0, 2).some(l => l.includes("感じ"))) {
-      note += `
-直近で「感じ」を使ったので、今回のlineでは「感じ」を使わないこと。`;
-    }
-  }
-
-  return note;
-}
 
 // =========================
 // 返事のシステムプロンプト
@@ -811,7 +762,7 @@ async function askOllama(userText) {
 
   let result;
   try {
-    const messages = TumugiConversation.replyMessages(conv, userText, buildDynamicNote() + facts);
+    const messages = TumugiConversation.replyMessages(conv, userText, TumugiPrompt.buildDynamicNote({ recentReplies, userEmotions: userEmotionHistory }) + facts);
 
     // 壊れた返事（TumugiSafety.parseReply が null）は1回だけ作り直す。それでもだめなら代わりの返事にする。
     // 壊れた返事の吹き出しは、作り直す前に消す。作り直しも少しずつ出す。
@@ -844,8 +795,8 @@ async function askOllama(userText) {
     if (userEmotionHistory.length > EMOTION_HISTORY_MAX) userEmotionHistory.pop();
   }
 
-  recentLines.unshift(result.line);
-  if (recentLines.length > RECENT_LINES_MAX) recentLines.pop();
+  recentReplies.unshift({ line: result.line, share: result.share || "", question: result.question || "" });
+  if (recentReplies.length > RECENT_REPLIES_MAX) recentReplies.pop();
 
   sendPrefill(TumugiConversation.replyPrefillMessages(conv), "整え");
   sendPrefill(TumugiConversation.judgePrefillMessages(conv), "整え（判定）");

@@ -9,6 +9,7 @@ const assert = require("node:assert/strict");
 const {
   NOTE_SEPARATOR, MEMORY_EXTRACT_EVERY,
   withDynamicNote, stripPlaceholders, buildReplySystemPrompt, buildMemoryPrompt, buildGreeting,
+  extractLineEnding, buildDynamicNote,
 } = require("../js/prompt");
 
 // -----------------------------------------
@@ -100,4 +101,136 @@ test("buildGreeting: 名前の前後の空白は除き、20字を超える名前
   assert.equal(buildGreeting(12, " たろう "), "たろう、おつかれ〜。今日はどう過ごしてる？");
   assert.equal(buildGreeting(12, "あ".repeat(20)), `${"あ".repeat(20)}、おつかれ〜。今日はどう過ごしてる？`);
   assert.equal(buildGreeting(12, "あ".repeat(21)), "おつかれ〜。今日はどう過ごしてる？");
+});
+
+// -----------------------------------------
+// extractLineEnding
+// -----------------------------------------
+test("extractLineEnding: 終わりの「…」「！」などを除いて、最後の3文字", () => {
+  assert.equal(extractLineEnding("雨降ってきたんだね…"), "んだね");
+  assert.equal(extractLineEnding("それは大変だね！"), "変だね");
+  assert.equal(extractLineEnding("え、4時間も？"), "間も？");
+  assert.equal(extractLineEnding(""), "");
+  assert.equal(extractLineEnding(undefined), "");
+});
+
+// -----------------------------------------
+// buildDynamicNote
+// -----------------------------------------
+// 返事 { line, share, question } を作る（新しい順に並べて渡す）
+const r = (line, question = "", share = "") => ({ line, share, question });
+
+test("buildDynamicNote: 返事も気持ちもなければ空", () => {
+  assert.equal(buildDynamicNote({ recentReplies: [], userEmotions: [] }), "");
+  assert.equal(buildDynamicNote(), "");
+});
+
+test("buildDynamicNote: 文末の一覧は新しい順", () => {
+  const note = buildDynamicNote({ recentReplies: [r("雨降ってきたんだね…"), r("それは大変だね！")] });
+  assert.ok(
+    note.includes("【言い方の重複回避】\n直近のlineの終わり方は 「…んだね」「…変だね」 だった。今回はこれらと違う終わり方・違う受け止め方にすること。"),
+    "文末の一覧が新しい順になっていない"
+  );
+});
+
+test("buildDynamicNote: 直近2回の line か question に「感じ」があれば、line でも question でも使わない文を付ける", () => {
+  const sentence = "今回は line でも question でも「感じ」を使わないこと。";
+  const twoBack = buildDynamicNote({ recentReplies: [r("そっか"), r("眠いんだね", "どんな感じ？")] });
+  assert.ok(twoBack.includes(sentence), "2回前の question の「感じ」を見ていない");
+  const prev = buildDynamicNote({ recentReplies: [r("いい感じじゃん")] });
+  assert.ok(prev.includes(sentence), "前回の line の「感じ」を見ていない");
+  const threeBack = buildDynamicNote({ recentReplies: [r("そっか"), r("うん"), r("いい感じじゃん")] });
+  assert.ok(!threeBack.includes(sentence), "3回前の「感じ」まで見ている");
+});
+
+test("buildDynamicNote: 前回の当てにいく言い方には、別の受け止め方にする文を付ける", () => {
+  const sentence = "前回は気持ちを想像して問いかけたので、今回は別の受け止め方にすること。";
+  assert.ok(buildDynamicNote({ recentReplies: [r("体が重たい感じなのかな")] }).includes(sentence), "「感じなのかな」に当たっていない");
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("ミスしちゃったんだ…まだそのことが頭から離れなかったりする？")] }).includes(sentence),
+    "「ったりする？」に当たっていない"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("そっか"), r("体が重たい感じなのかな")] }).includes(sentence),
+    "2回前だけなのに文が付いている"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("仕事が辛いんだね…", "どんなことがあったの？")] }).includes(sentence),
+    "ふつうの問いかけに文が付いている"
+  );
+});
+
+test("buildDynamicNote: 直近2回に気づかいの言葉があれば（share も見る）、気づかい以外の返し方にする文を付ける", () => {
+  const sentence = "今回は気づかい以外の返し方（反応・受け止め・問いかけ）にすること。";
+  const inShare = buildDynamicNote({ recentReplies: [r("そっか"), r("寒いのかぁ", "", "ちゃんと暖かくしてね")] });
+  assert.ok(inShare.includes(sentence), "2回前の share を見ていない");
+  const threeBack = buildDynamicNote({ recentReplies: [r("そっか"), r("うん"), r("寒いのかぁ、ちゃんと暖かくしてね")] });
+  assert.ok(!threeBack.includes(sentence), "3回前の気づかいまで見ている");
+});
+
+test("buildDynamicNote: 気づかい以外の返し方にする文のあとに、お礼やあいさつに返す文を付ける", () => {
+  const sentence = "今回は気づかい以外の返し方（反応・受け止め・問いかけ）にすること。お礼やあいさつには、まずそれに返すこと。";
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("寒いのかぁ、ちゃんと暖かくしてね")] }).includes(sentence),
+    "気づかいの文のあとに、お礼やあいさつに返す文がない"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("そっか"), r("うん")] }).includes("お礼やあいさつには"),
+    "気づかいがないのに、お礼やあいさつに返す文が付いている"
+  );
+});
+
+test("buildDynamicNote: 直近2回の問いかけが「今日」で始まっていれば（？で終わる line も見る）、「今日」で始めない文を付ける", () => {
+  const sentence = "直近の問いかけを「今日」で始めたので、今回は「今日」で始めず、別のことを聞くこと。";
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("そっか"), r("寒いのかぁ", "今日は外にいたの？")] }).includes(sentence),
+    "2回前の question の「今日」を見ていない"
+  );
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("眠いんだね…今日はどんな一日だったの？")] }).includes(sentence),
+    "？で終わる line の「今日」を見ていない"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("そっか"), r("うん"), r("寒いのかぁ", "今日は外にいたの？")] }).includes(sentence),
+    "3回前の「今日」まで見ている"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("今日も寒いんだね", "何か飲んでる？")] }).includes(sentence),
+    "問いかけでない line の「今日」に文が付いている"
+  );
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("寒いね", "そっか、今日は何してたの？")] }).includes(sentence),
+    "question の読点のあとの「今日」を見ていない"
+  );
+  assert.ok(
+    buildDynamicNote({ recentReplies: [r("寒いね", "今日は何してたの")] }).includes(sentence),
+    "「？」のない question の「今日」を見ていない"
+  );
+  assert.ok(
+    !buildDynamicNote({ recentReplies: [r("今日は寒いね、外にいたの？")] }).includes(sentence),
+    "line の最後の問いが「今日」で始まらないのに文が付いている"
+  );
+});
+
+test("buildDynamicNote: 感情の流れは、今と同じ条件で付ける", () => {
+  const header = "【感情の流れに注意】";
+  assert.ok(
+    buildDynamicNote({ userEmotions: ["tired", "tired", "normal"] }).includes(
+      "\n【感情の流れに注意】\n直近2回連続でユーザーの感情が「疲れ」傾向。一時的な気分ではなく根深い悩みかもしれない。\nいつもより一段深く受け止め、気持ちの想像をより丁寧に行うこと。"
+    ),
+    "疲れが2回連続の文が違う"
+  );
+  assert.ok(
+    buildDynamicNote({ userEmotions: ["sad", "sad", "sad"] }).includes("直近3回連続でユーザーの感情が「悲しい・落ち込み」傾向。"),
+    "悲しいが3回連続の文が違う"
+  );
+  assert.ok(!buildDynamicNote({ userEmotions: ["normal", "tired", "tired"] }).includes(header), "先頭が違うのに付いている");
+  assert.ok(!buildDynamicNote({ userEmotions: ["anxious", "sad"] }).includes(header), "感情が違うのに付いている");
+  assert.ok(!buildDynamicNote({ userEmotions: ["tired"] }).includes(header), "1回だけなのに付いている");
+});
+
+test("buildDynamicNote: 欄が足りない返事（代わりの返事など）でも動く", () => {
+  let note;
+  assert.doesNotThrow(() => { note = buildDynamicNote({ recentReplies: [{ line: "そっか" }] }); });
+  assert.ok(note.includes("「…そっか」"), "line だけの返事の文末が一覧にない");
 });
