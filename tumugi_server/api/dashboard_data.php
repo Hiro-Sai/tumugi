@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
+require_once __DIR__ . '/../includes/aggregate_rules.php';
 setCorsHeaders();
 
 // -----------------------------------------
@@ -12,14 +13,7 @@ requireAdmin();
 
 $pdo = getDbConnection();
 
-// -----------------------------------------
-// 個人特定の対策：
-// 直近7日間に記録がある在籍社員（実際に集計に入る人）が MIN_DEPT_SIZE 名未満の部署・グループは表示しない。
-// 在籍人数で判定すると、在籍は多くても記録がある人が少ない部署で、少人数の値がそのまま出てしまうため。
-// 10名は、ストレスチェック制度の集団分析の目安（10人を下回る集団の結果は、
-// 全員の同意がない限り事業者に渡さない）に合わせている。
-// -----------------------------------------
-define('MIN_DEPT_SIZE', 10);
+// 集計の決まりの定数（MIN_DEPT_SIZE など）は includes/aggregate_rules.php にある
 
 // -----------------------------------------
 // まれな事象（危機検知・ハラスメント）は、該当したユニーク人数で表示を3段階に分ける。
@@ -40,22 +34,58 @@ function rareEventDisplay(int $distinctCount, int $logCount): array {
 }
 
 // -----------------------------------------
-// 社員ごとの直近7日間の集計（在籍社員のみ）。部署別・新卒の集計はこれをもとにする。
+// 集計は、記録した時点の所属（emotion_logs.department / is_new_grad）で作る。
+// 社員の「今の」所属（employees.department など）で数えると、管理者が部署を付け替えるだけで、
+// 集計が変わってしまう。例えば11名の部署から1人を移して10名の部署を作ると、
+// 差から移した人の値が分かるし、最低人数（MIN_DEPT_SIZE）の守りもすり抜けられる。
+// 記録の側に所属を持たせておけば、付け替えても、すでにある記録の行き先は動かない。
+//
+// 集計に入る記録の条件（部署・新卒・ハラスメントの3つとも同じ）：
+//   - 直近 AGGREGATE_WINDOW_DAYS 日の記録（l.recorded_at）
+//   - l.is_counted = 1。記録した時点で、管理者の記録と、集計に入れ始める時刻（employees.counted_from）から
+//     NEW_EMPLOYEE_WAIT_DAYS 日以内の記録を 0 にしてある（api/save_emotion.php）。
+//     あとから管理者の印を付けても、待ちが明けても、すでにある記録の印は動かない。
+//     集計のときに時刻で見ると、待ちが明けた瞬間にそれまでの記録がいっぺんに入り、差でその人の値が分かるため。
+// 在籍か退職か（employees.is_active）は見ない。退職にした途端に人数が減ると、これも差から分かるため。
+// 時刻の比較は、すべて MySQL の NOW() で行う（PHP の時計とは混ぜない）。
+// 日数は整数の定数だけを SQL に入れる（利用者の入力は入らない）。
+// -----------------------------------------
+const COUNTED_LOGS_WHERE = "
+    l.recorded_at >= (NOW() - INTERVAL " . AGGREGATE_WINDOW_DAYS . " DAY)
+      AND l.is_counted = 1
+";
+
+// -----------------------------------------
+// 社員ごとの集計。部署別・新卒の集計はこれをもとにする。
 // 平均スコアは「社員ごとの平均」をグループで平均する。ログの件数で重みを付けると、
 // よく話す人の気分でグループの値が決まってしまうため。
 // -----------------------------------------
-const PER_EMPLOYEE_SQL = "
-    SELECT e.department,
-           e.is_new_grad,
+
+// 部署別用：記録の所属ごとに、社員1人を1行にする。
+// 直近7日のうちに部署を移った人は、前の部署と新しい部署の両方で1人と数える
+const PER_EMPLOYEE_DEPT_SQL = "
+    SELECT l.department,
+           l.employee_id,
            AVG(l.negativity_score) AS emp_avg,
            COUNT(l.id) AS emp_logs,
            SUM(l.is_crisis) AS emp_crisis_logs,
            MAX(l.is_crisis) AS emp_has_crisis
     FROM emotion_logs l
-    JOIN employees e ON e.id = l.employee_id
-    WHERE l.recorded_at >= (NOW() - INTERVAL 7 DAY)
-      AND e.is_active = 1
-    GROUP BY e.id, e.department, e.is_new_grad
+    WHERE " . COUNTED_LOGS_WHERE . "
+    GROUP BY l.employee_id, l.department
+";
+
+// 新卒用：記録の時点で新卒だった行だけを、社員ごとに1行にする（部署はまたぐので見ない）
+const PER_EMPLOYEE_NEW_GRAD_SQL = "
+    SELECT l.employee_id,
+           AVG(l.negativity_score) AS emp_avg,
+           COUNT(l.id) AS emp_logs,
+           SUM(l.is_crisis) AS emp_crisis_logs,
+           MAX(l.is_crisis) AS emp_has_crisis
+    FROM emotion_logs l
+    WHERE " . COUNTED_LOGS_WHERE . "
+      AND l.is_new_grad = 1
+    GROUP BY l.employee_id
 ";
 
 // -----------------------------------------
@@ -67,7 +97,7 @@ $deptStmt = $pdo->prepare(
             SUM(p.emp_logs) AS log_count,
             SUM(p.emp_crisis_logs) AS crisis_logs,
             SUM(p.emp_has_crisis) AS crisis_people
-     FROM (" . PER_EMPLOYEE_SQL . ") p
+     FROM (" . PER_EMPLOYEE_DEPT_SQL . ") p
      GROUP BY p.department
      HAVING COUNT(*) >= :min_size
      ORDER BY p.department"
@@ -95,8 +125,7 @@ $newGradRow = $pdo->query(
             COALESCE(SUM(p.emp_logs), 0) AS log_count,
             COALESCE(SUM(p.emp_crisis_logs), 0) AS crisis_logs,
             COALESCE(SUM(p.emp_has_crisis), 0) AS crisis_people
-     FROM (" . PER_EMPLOYEE_SQL . ") p
-     WHERE p.is_new_grad = 1"
+     FROM (" . PER_EMPLOYEE_NEW_GRAD_SQL . ") p"
 )->fetch();
 
 $newGrad = null;
@@ -126,9 +155,7 @@ function getHarassmentCategoryStats(PDO $pdo, string $type): array {
     $stmt = $pdo->prepare(
         "SELECT COUNT(DISTINCT l.employee_id) AS distinct_count, COUNT(l.id) AS log_count
          FROM emotion_logs l
-         JOIN employees e ON e.id = l.employee_id
-         WHERE l.recorded_at >= (NOW() - INTERVAL 7 DAY)
-           AND e.is_active = 1
+         WHERE " . COUNTED_LOGS_WHERE . "
            AND l.harassment_type = :type"
     );
     $stmt->execute(['type' => $type]);

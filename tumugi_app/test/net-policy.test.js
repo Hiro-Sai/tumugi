@@ -49,6 +49,15 @@ test("buildRelayUrl: 許可した16の組は URL を返す", () => {
   }
 });
 
+test("buildRelayUrl: 本人あての知らせの2つの API を通し、メソッドの違いは拒否する", () => {
+  assert.equal(buildRelayUrl("server", "/my_notices.php", "GET"), "http://127.0.0.1:8080/api/my_notices.php");
+  assert.equal(buildRelayUrl("server", "/my_notices_seen.php", "POST"), "http://127.0.0.1:8080/api/my_notices_seen.php");
+  assertRejected([
+    ["server", "/my_notices.php",      "POST"],
+    ["server", "/my_notices_seen.php", "GET"],
+  ]);
+});
+
 test("buildRelayUrl: 接続先のすり替えを拒否する", () => {
   assertRejected([
     ["ollama",   "@evil.com/x",                 "POST"],

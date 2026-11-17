@@ -86,11 +86,11 @@ function validateEmployeeFields(array $input, bool $isNew): array {
     } elseif ($isNew && strtolower($values['employee_code']) === EMPLOYEE_RESERVED_CODE) {
         $error = '社員ID「CLI」は、管理者を作る道具の記録に使うため、登録できません';
     } elseif ($nameLength === 0) {
-        $error = '名前を入れてください';
+        $error = '氏名を入力してください';
     } elseif ($nameLength > EMPLOYEE_TEXT_MAX_CHARS) {
-        $error = '名前は50文字までにしてください';
+        $error = '氏名は50文字までにしてください';
     } elseif ($departmentLength === 0) {
-        $error = '部署を入れてください';
+        $error = '部署を入力してください';
     } elseif ($departmentLength > EMPLOYEE_TEXT_MAX_CHARS) {
         $error = '部署は50文字までにしてください';
     }

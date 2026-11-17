@@ -63,7 +63,7 @@ $newPassword     = (string)($input['new_password'] ?? '');
 if (!password_verify($currentPassword, $employee['password_hash'])) {
     recordAttempt($pdo, $employeeCode, false);
     http_response_code(403);
-    echo json_encode(['error' => '今のパスワードが正しくありません']);
+    echo json_encode(['error' => '現在のパスワードが正しくありません']);
     exit;
 }
 
@@ -82,7 +82,7 @@ if (strlen($newPassword) > MAX_PASSWORD_BYTES) {
 
 if ($newPassword === $currentPassword) {
     http_response_code(400);
-    echo json_encode(['error' => '今と同じパスワードにはできません']);
+    echo json_encode(['error' => '現在と同じパスワードにはできません']);
     exit;
 }
 
@@ -92,9 +92,16 @@ $newHash = password_hash($newPassword, PASSWORD_BCRYPT);
 // 途中で失敗したら（例外で止まると接続が閉じて）、どちらも元に戻る。
 $pdo->beginTransaction();
 
-// 仮のパスワードのままだった社員も、これで普通の状態に戻る（must_change_password = 0）
+// 仮のパスワードのままだった社員も、これで普通の状態に戻る（must_change_password = 0）。
+// そのときだけ、集計に入れ始める時刻（counted_from）を今にする（自分のパスワードを決めてから7日は、集計に入れない。
+// 管理者が仮のパスワードを発行して、その社員の記録を集計に入れ続ける、ということをさせないため）。
+// UPDATE の SET は左から順に評価されるので、counted_from は must_change_password = 0 より前に書くこと。
 $update = $pdo->prepare(
-    "UPDATE employees SET password_hash = :hash, must_change_password = 0 WHERE id = :id"
+    "UPDATE employees
+     SET password_hash = :hash,
+         counted_from = IF(must_change_password = 1, NOW(), counted_from),
+         must_change_password = 0
+     WHERE id = :id"
 );
 $update->execute(['hash' => $newHash, 'id' => $employeeId]);
 

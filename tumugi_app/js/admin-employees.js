@@ -1,20 +1,20 @@
 // =========================================
 // 管理者ダッシュボードの「社員」タブ
-//   左：社員の一覧（探す・選ぶ）　右：詳しい欄（登録・直す・リセット・退職・消す）
+//   左：社員の一覧（検索・選ぶ）　右：詳しい欄（登録・直す・仮のパスワードを発行・退職・削除）
 //
 // 右の欄は、場面（mode）を切り替えて出す。
 //   none               何も選んでいない
 //   new                登録
 //   detail             社員を選んだとき（直す・各操作のボタン）
-//   password           ① 仮のパスワードの表示（登録・リセットのあと）
-//   confirmReset       ② リセットの確認
+//   password           ① 仮のパスワードの表示（登録・仮のパスワードの発行のあと）
+//   confirmReset       ② 仮のパスワードの発行の確認
 //   confirmDeactivate  退職の確認
-//   confirmDelete      ③ 消すときの確認
+//   confirmDelete      ③ 削除の確認
 //
 // 決まり
-//   - 名前など DB から来た文字は、必ず textContent（h() の文字の子）で出す。innerHTML は使わない。
+//   - 氏名など DB から来た文字は、必ず textContent（h() の文字の子）で出す。innerHTML は使わない。
 //   - 仮のパスワードは、画面に出すだけ。console にも、ほかの変数にも残さない（閉じたら捨てる）。
-//   - ①を出しているあいだと、サーバーに送っているあいだは、「← チャットに戻る」・集計のタブ・一覧を押せなくする。
+//   - ①を出しているあいだと、サーバーに送っているあいだは、「チャットに戻る」・集計のタブ・一覧を押せなくする。
 //     ①を出しているあいだは、一覧も読み直さない（読み直しで 401 になるとログアウトでウィンドウが閉じ、
 //     仮のパスワードが消えるため）。一覧は「伝えたので閉じる」を押したときに読み直す。
 //   - 入力の確かめや「今できる操作」の判定は employee-rules.js に任せる（ここには書かない）。
@@ -29,10 +29,10 @@
 
   const MSG_NO_CONNECTION = "サーバーに接続できませんでした";
   const MSG_FAILED = "操作できませんでした。もう一度お試しください";
-  const MSG_SELF = "自分自身は、リセット・退職にする・管理者から外すことができません。自分のパスワードは、チャットの『設定』から変えてください。";
-  const MSG_LAST_ADMIN = "この人は在籍の管理者の最後の1人のため、退職にすることも、管理者から外すこともできません。";
-  const MSG_TAB_LOCKED = "仮のパスワードを閉じてから切り替えてください";
-  const MSG_BACK_LOCKED = "仮のパスワードを閉じてから戻ってください";
+  const MSG_SELF = "自分自身は、仮のパスワードの発行・退職にする・管理者から外すことができません。自分のパスワードは、チャット画面の『設定』から変更してください。";
+  const MSG_LAST_ADMIN = "この人は在籍中の管理者の最後の1人のため、退職にすることも、管理者から外すこともできません。";
+  const MSG_TAB_LOCKED = "仮のパスワードの表示を閉じてから切り替えてください";
+  const MSG_BACK_LOCKED = "仮のパスワードの表示を閉じてから戻ってください";
   const NEW_DEPARTMENT_LABEL = "新しい部署…";
 
   // 選んだ社員が要る場面
@@ -219,7 +219,7 @@
     endBusy();
   }
 
-  // 「＋ 新しい社員」・タブの切り替え・「← チャットに戻る」を、押せるかどうか合わせる。
+  // 「社員を登録」・タブの切り替え・「チャットに戻る」を、押せるかどうか合わせる。
   // 送っている途中と、①の表示中は、右の欄を替えさせず、ウィンドウも閉じさせない（仮のパスワードは二度と出せないため）。
   // （ウィンドウの × は止められない。beforeunload で止めると、ウィンドウを閉じられなくなるため）
   function syncControls() {
@@ -312,20 +312,20 @@
     const reloaded = await reloadEmployees();
     message = reloaded
       ? { text, kind }
-      : { text: `${text}（一覧は読み直せませんでした）`, kind: "error" };
+      : { text: `${text}（一覧を再読み込みできませんでした）`, kind: "error" };
     markSelected();
     renderDetail();
     revealSelected();
   }
 
-  // 登録・リセットのあと。仮のパスワードは、この応答でしか手に入らない。
+  // 登録・仮のパスワードの発行のあと。仮のパスワードは、この応答でしか手に入らない。
   // 応答から先に出し、①の表示中は一覧を読み直さない（読み直しで 401 になると、ログアウトで
   // ウィンドウが閉じて、仮のパスワードが失われるため）。一覧は「伝えたので閉じる」で読み直す
   async function finishWithPassword(res, kind, code, name) {
     const password = res.data && typeof res.data.temp_password === "string" ? res.data.temp_password : "";
     if (password === "") {
       // サーバーの不具合で、仮のパスワードが入っていない。操作は済んでいるので、やり直しを案内する
-      await finishWith(code, "操作はできましたが、仮のパスワードを受け取れませんでした。もう一度「パスワードをリセット」を押してください", "error");
+      await finishWith(code, "操作はできましたが、仮のパスワードを受け取れませんでした。もう一度「仮のパスワードを発行」を押してください", "error");
       return;
     }
     // 「送っている途中」は、呼び出し元の perform が終わらせる（①のボタンは描き直した新しい部品なので押せる）
@@ -364,12 +364,12 @@
     if (listError) {
       nodes.push(h("div", { class: "emp-list-note error" },
         h("div", {}, listError),
-        h("button", { type: "button", class: "emp-btn sub", onclick: () => loadEmployeesTab() }, "もう一度読み込む")
+        h("button", { type: "button", class: "emp-btn sub", onclick: () => loadEmployeesTab() }, "再読み込み")
       ));
     } else if (loading && showLoadingNote) {
       nodes.push(h("div", { class: "emp-list-note" }, "読み込み中…"));
     } else if (employees.length === 0) {
-      nodes.push(h("div", { class: "emp-list-note" }, "社員がいません"));
+      nodes.push(h("div", { class: "emp-list-note" }, "社員が登録されていません"));
     }
 
     const rows = Rules.filterEmployees(Rules.sortEmployees(employees), searchEl.value);
@@ -470,7 +470,7 @@
       h("option", { "data-new": "1" }, NEW_DEPARTMENT_LABEL)
     );
     const typed = h("input", {
-      type: "text", class: "emp-input", placeholder: "新しい部署の名前", autocomplete: "off", hidden: true,
+      type: "text", class: "emp-input", placeholder: "新しい部署名", autocomplete: "off", hidden: true,
     });
 
     const usingNew = () => select.selectedOptions[0]?.dataset.new === "1";
@@ -510,16 +510,16 @@
       type: "button",
       class: "emp-btn",
       onclick: () => (isNew ? submitCreate(form) : submitUpdate(target, form)),
-    }, isNew ? "登録する" : "保存する");
+    }, isNew ? "登録する" : "変更を保存");
 
     if (isNew) focusEl = codeInput;
 
     return [
-      h("div", { class: "emp-title" }, isNew ? "新しい社員を登録" : `${target.employee_code} ${target.display_name}`),
+      h("div", { class: "emp-title" }, isNew ? "社員を登録" : `${target.employee_code} ${target.display_name}`),
       isNew
         ? field("社員ID", codeInput)
         : h("div", { class: "emp-field" }, h("span", { class: "emp-label" }, "社員ID"), h("div", { class: "emp-fixed" }, target.employee_code)),
-      field("名前", nameInput),
+      field("氏名", nameInput),
       dept.node,
       h("div", { class: "emp-checks" },
         h("label", { class: "emp-check" }, newGradBox, "新卒"),
@@ -535,17 +535,17 @@
     ];
   }
 
-  // 在籍中なら「パスワードをリセット」「退職にする」、退職中なら「在籍に戻す」「消す」。
+  // 在籍中なら「仮のパスワードを発行」「退職にする」、退職中なら「在籍に戻す」「削除」。
   // できない操作は押せなくして、理由を出す
   function operationsView(target, actions) {
     const buttons = target.is_active
       ? [
-          h("button", { type: "button", class: "emp-btn sub", disabled: !actions.reset, onclick: () => goTo("confirmReset") }, "パスワードをリセット"),
+          h("button", { type: "button", class: "emp-btn sub", disabled: !actions.reset, onclick: () => goTo("confirmReset") }, "仮のパスワードを発行"),
           h("button", { type: "button", class: "emp-btn warn", disabled: !actions.deactivate, onclick: () => goTo("confirmDeactivate") }, "退職にする"),
         ]
       : [
           h("button", { type: "button", class: "emp-btn sub", disabled: !actions.reactivate, onclick: () => reactivate(target) }, "在籍に戻す"),
-          h("button", { type: "button", class: "emp-btn warn", disabled: !actions.remove, onclick: () => goTo("confirmDelete") }, "消す"),
+          h("button", { type: "button", class: "emp-btn warn", disabled: !actions.remove, onclick: () => goTo("confirmDelete") }, "削除"),
         ];
 
     let reason = "";
@@ -562,12 +562,12 @@
   function passwordView() {
     const title = shown.kind === "create"
       ? `${shown.code} ${shown.name} を登録しました`
-      : `${shown.code} ${shown.name} のパスワードをリセットしました`;
+      : `${shown.code} ${shown.name} の仮のパスワードを発行しました`;
     return [
       h("div", { class: "emp-title" }, title),
       h("p", { class: "emp-hint" }, "仮のパスワード（この画面を閉じると、二度と表示されません）"),
       h("div", { class: "emp-pw" }, shown.password),
-      h("p", { class: "emp-note" }, "本人に直接伝えてください。最初のログインで、本人が新しいパスワードに変えます。"),
+      h("p", { class: "emp-note" }, "本人に直接伝えてください。本人は、最初のログイン時に新しいパスワードへ変更します。"),
       h("div", { class: "emp-actions right spaced" },
         h("button", { type: "button", class: "emp-btn", onclick: closePasswordPanel }, "伝えたので閉じる")
       ),
@@ -586,19 +586,21 @@
   }
 
   function cancelButton() {
-    return h("button", { type: "button", class: "emp-btn sub", onclick: () => goTo("detail") }, "やめる");
+    return h("button", { type: "button", class: "emp-btn sub", onclick: () => goTo("detail") }, "キャンセル");
   }
 
-  // ②：リセットの確認
+  // ②：仮のパスワードの発行の確認
   function resetConfirmView(target) {
     return confirmView(
-      `${target.employee_code} ${target.display_name} のパスワードをリセットしますか？`,
+      `${target.employee_code} ${target.display_name} の仮のパスワードを発行しますか？`,
       [
+        "・この人の今のパスワードは使えなくなります。",
         "・この人のログインは、すべて切れます。",
-        "・この人のつむぎの記憶は読めなくなり、消えます（元に戻せません）。",
+        "・この人のつむぎの記憶は読めなくなり、削除されます（元に戻せません）。",
+        "・新しいパスワードを決めてから7日間、この人の記録は集計に入りません。",
       ],
       null,
-      [cancelButton(), h("button", { type: "button", class: "emp-btn warn", onclick: () => resetPassword(target) }, "リセットする")]
+      [cancelButton(), h("button", { type: "button", class: "emp-btn warn", onclick: () => resetPassword(target) }, "発行する")]
     );
   }
 
@@ -608,7 +610,7 @@
       `${target.employee_code} ${target.display_name} を退職にしますか？`,
       [
         "・この人は、すぐにログインできなくなります。",
-        "・いまログインしているものも、すべて切れます。",
+        "・現在ログイン中の状態も、すべて切れます。",
         "・あとで「在籍に戻す」と、同じパスワードでまたログインできます。",
       ],
       null,
@@ -616,27 +618,28 @@
     );
   }
 
-  // ③：消すときの確認。社員IDを打ち込むと、初めて「消す」が押せる
+  // ③：削除の確認。社員IDを打ち込むと、初めて「削除する」が押せる
   function deleteConfirmView(target) {
     const typed = h("input", {
-      type: "text", class: "emp-input", autocomplete: "off", spellcheck: "false", "aria-label": "確かめのための社員ID",
+      type: "text", class: "emp-input", autocomplete: "off", spellcheck: "false", "aria-label": "確認のための社員ID",
     });
     const removeBtn = h("button", {
       type: "button", class: "emp-btn danger", disabled: true, onclick: () => remove(target, typed),
-    }, "消す");
+    }, "削除する");
     typed.addEventListener("input", () => {
       removeBtn.disabled = !Rules.canConfirmDelete(target, typed.value);
     });
     focusEl = typed;
 
     return confirmView(
-      `${target.employee_code} ${target.display_name} を消しますか？`,
+      `${target.employee_code} ${target.display_name} を削除しますか？`,
       [
-        "この人の社員の情報と、感情ログがすべて消えます。元に戻せません。",
-        "集計の数字も変わります。",
+        "この人の社員情報と感情記録が、すべて削除されます。元に戻せません。",
+        "集計の数値も変わります。",
+        "直近7日間に感情記録がある社員は、削除できません。",
       ],
       h("div", { class: "emp-field" },
-        h("span", { class: "emp-hint" }, `確かめるため、社員ID「${target.employee_code}」を入れてください`),
+        h("span", { class: "emp-hint" }, `確認のため、社員ID「${target.employee_code}」を入力してください`),
         typed
       ),
       [cancelButton(), removeBtn]
@@ -721,7 +724,7 @@
     const confirmCode = typed.value.trim();
     perform(
       () => callServer("/admin_employee_delete.php", "POST", { employee_code: target.employee_code, confirm_code: confirmCode }),
-      () => finishWith(null, `${target.employee_code} ${target.display_name} を消しました`)
+      () => finishWith(null, `${target.employee_code} ${target.display_name} を削除しました`)
     );
   }
 

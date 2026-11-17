@@ -1,0 +1,267 @@
+/* ============================================================
+   管理者の画面（admin-dashboard.html）。body.page-admin の中だけで効く。
+   土台の変数・共通の部品は css/style.css にある（このファイルは style.css のあとに読む）。
+   「集計」タブ・「社員」タブ（emp-…）とも新しいデザイン。
+   色・フォントは、style.css の新しい変数（--ground・--ink・--blue など、--font）だけを使う。
+   ============================================================ */
+
+body.page-admin {
+  min-height: 100vh;
+  overflow: hidden;              /* 古い body と同じ。中の .admin-body が縦に動く */
+  background: var(--ground);     /* 古いグラデーションを上書き */
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.8;
+  color: var(--ink);
+}
+/* :where で強さを下げる（.btn などの文字の色・太さに勝たないように） */
+:where(.page-admin) button, :where(.page-admin) input { font: inherit; color: inherit; }
+:where(.page-admin) h1, :where(.page-admin) h2, :where(.page-admin) h3 { line-height: 1.5; font-weight: 700; font-family: var(--font); color: var(--ink); text-transform: none; }
+:where(.page-admin) table { width: 100%; border-collapse: collapse; font-size: 15px; }
+:where(.page-admin) th, :where(.page-admin) td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+:where(.page-admin) th { font-size: 14px; color: var(--ink-sub); font-weight: 700; }
+
+/* ---- 全体：上の帯と、その下の本文 ---- */
+.page-admin .admin { height: 100vh; display: flex; flex-direction: column; }
+.page-admin .admin-bar { flex: none; background: var(--navy); color: var(--surface); display: flex; align-items: center; gap: 20px; padding: 12px 28px; }
+.page-admin .admin-bar .admin-title { font-size: 18px; letter-spacing: 0.04em; color: var(--surface); }
+.page-admin .admin-tabs { display: flex; gap: 4px; margin: 0 0 0 12px; }
+.page-admin .admin-tab { background: none; border: 1.5px solid transparent; color: var(--blue-pale); padding: 5px 15px; border-radius: 8px; font-weight: 700; line-height: 1.5; min-height: 36px; cursor: pointer; }
+.page-admin .admin-tab:hover:not(:disabled):not(.on) { background: var(--blue-deep); color: var(--surface); }
+.page-admin .admin-tab.on, .page-admin .admin-tab[aria-selected="true"] { background: var(--surface); color: var(--navy); cursor: default; }
+/* 押せないとき：opacity は使わず、色（紺の帯の上で 9.4:1）と破線の枠で、押せないことを示す */
+.page-admin .admin-tab:disabled:not(.on) { color: var(--line); border: 1.5px dashed var(--edge); cursor: not-allowed; }
+/* 濃い帯の上では、フォーカスの線を白にする */
+.page-admin .admin-bar :focus-visible { outline-color: var(--surface); }
+/* 選ばれている白いタブでは、白い線が重なって二重の枠に見える。白いタブの内側に、青い線で出す */
+.page-admin .admin-bar .admin-tab.on:focus-visible,
+.page-admin .admin-bar .admin-tab[aria-selected="true"]:focus-visible { outline: 3px solid var(--blue); outline-offset: -6px; }
+.page-admin .admin-back-btn { margin-left: auto; background: none; border: 1.5px solid var(--edge); color: var(--surface); border-radius: 8px; padding: 6px 16px; line-height: 1.5; min-height: 36px; cursor: pointer; white-space: nowrap; }
+.page-admin .admin-back-btn:hover:not(:disabled) { background: var(--blue-deep); }
+.page-admin .admin-back-btn:disabled { color: var(--line); border-style: dashed; cursor: not-allowed; }
+.page-admin .admin-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 28px 32px; }
+
+/* ---- 集計 ---- */
+.page-admin .admin-section-title { font-size: var(--fs-h2); margin-bottom: 4px; }
+.page-admin .lead { color: var(--ink-sub); font-size: 15px; max-width: 46em; margin-bottom: 16px; }
+.page-admin .admin-note { color: var(--ink-sub); font-size: 15px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 16px; margin-bottom: 16px; }
+.page-admin .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 22px; margin-bottom: 16px; }
+.page-admin .panel h3 { font-size: var(--fs-body); margin-bottom: 10px; }
+.page-admin .panel .hint { margin-top: 10px; }
+/* 出せるグループが無いとき */
+.page-admin .panel.empty p { color: var(--ink-sub); font-size: 15px; }
+
+/* 横棒。名前／棒／点数の3列 */
+.page-admin .bars { display: grid; grid-template-columns: 9em minmax(0, 1fr) 3.5em; gap: 10px 14px; align-items: center; font-size: 15px; }
+.page-admin .bars .bar-name { min-width: 0; overflow-wrap: anywhere; }
+.page-admin .bars .track { height: 18px; background: var(--ground); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.page-admin .bars .fill { height: 100%; background: var(--blue); }
+.page-admin .bars .fill.grad { background: var(--ink-sub); }
+.page-admin .bars .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+/* 表 */
+.page-admin td.n, .page-admin th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.page-admin td.name { overflow-wrap: anywhere; }
+.page-admin .tag { display: inline-block; font-size: var(--fs-sub); line-height: 1.4; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--ground); white-space: nowrap; }
+.page-admin .tag.warn { border-color: var(--alert); color: var(--alert); background: var(--alert-pale); }
+
+/* 読み込み中・エラー */
+.page-admin .admin-loading, .page-admin .admin-error { text-align: center; color: var(--ink-sub); font-size: var(--fs-body); padding: 40px 0; }
+.page-admin .admin-error { color: var(--alert); }
+
+/* ---- 社員タブ ---- */
+/* 白い面（一覧と、右の欄）。影は付けない */
+.page-admin .admin-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 22px;
+  margin-bottom: 16px;
+}
+
+.page-admin .emp-panel {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.8;
+  color: var(--ink);
+}
+.page-admin .emp-side { flex: 1.15 1 0; min-width: 0; }
+.page-admin .emp-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.page-admin .emp-bar .emp-input { flex: 1; min-width: 0; }
+
+/* 入力欄（検索・氏名・部署の選択・確かめの社員ID） */
+.page-admin .emp-input {
+  width: 100%;
+  min-height: 44px;
+  background: var(--surface);
+  border: 1.5px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+}
+.page-admin .emp-input::placeholder { color: var(--ink-sub); opacity: 1; }
+.page-admin .emp-input:disabled { background: var(--ground); color: var(--ink-sub); border-color: var(--line); cursor: not-allowed; }
+
+/* ボタン（既定：主。.sub：白の地に青。.warn：白の地に赤い枠。.danger：最後の確かめの削除） */
+.page-admin .emp-btn {
+  background: var(--blue);
+  border: 1.5px solid var(--blue);
+  color: var(--surface);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  min-height: 36px;
+  padding: 5px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.page-admin .emp-btn:hover:not(:disabled) { background: var(--blue-deep); border-color: var(--blue-deep); }
+.page-admin .emp-btn.sub { background: var(--surface); color: var(--blue-deep); }
+.page-admin .emp-btn.sub:hover:not(:disabled) { background: var(--blue-pale); border-color: var(--blue); }
+.page-admin .emp-btn.warn { background: var(--surface); border-color: var(--alert); color: var(--alert); }
+.page-admin .emp-btn.warn:hover:not(:disabled) { background: var(--alert-pale); border-color: var(--alert); }
+.page-admin .emp-btn.danger { background: var(--alert); border-color: var(--alert); color: var(--surface); }
+.page-admin .emp-btn.danger:hover:not(:disabled) { background: var(--alert); border-color: var(--ink); }
+/* 押せないとき：opacity は使わず、平らな色にする */
+.page-admin .emp-btn:disabled { background: var(--ground); border-color: var(--line); color: var(--ink-sub); cursor: not-allowed; }
+
+/* 一覧 */
+.page-admin .emp-list-card { padding: 4px 12px; margin-bottom: 0; }
+/* 一覧全体を1つのグリッドにし、どの行も同じ列の幅を使う（札の有無で部署の位置がずれないように） */
+.page-admin .emp-list {
+  display: grid;
+  grid-template-columns: 5em minmax(5em, 1.2fr) minmax(4em, 1fr) minmax(6em, 0.8fr);
+  column-gap: 10px;
+  align-content: start;
+  max-height: calc(100vh - 270px);
+  min-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge) transparent;
+}
+.page-admin .emp-list.locked .emp-row { cursor: not-allowed; }
+.page-admin .emp-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: pointer;
+}
+.page-admin .emp-row:last-child { border-bottom: none; }
+/* ロック中（仮のパスワードの表示中）の行は押せないので、ホバーの色を付けない */
+.page-admin .emp-list:not(.locked) .emp-row:hover:not(.sel) { background: var(--ground); }
+.page-admin .emp-row.sel { background: var(--blue-pale); }
+.page-admin .emp-row.off { color: var(--ink-sub); }
+/* 一覧は枠の中で動く（overflow）ので、フォーカスの線は行の内側に出す */
+.page-admin .emp-row:focus-visible { outline-offset: -3px; }
+.page-admin .emp-id { font-variant-numeric: tabular-nums; }
+.page-admin .emp-id, .page-admin .emp-name, .page-admin .emp-dept {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-admin .emp-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+/* 札（集計の表の .tag と同じ見た目） */
+.page-admin .emp-tag {
+  display: inline-block;
+  font-size: var(--fs-sub);
+  line-height: 1.4;
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--ground);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.page-admin .emp-tag.adm { border-color: var(--blue); color: var(--blue-deep); background: var(--blue-pale); }
+.page-admin .emp-list-note {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--ink-sub);
+  font-size: 15px;
+  padding: 28px 0;
+  line-height: 1.8;
+}
+.page-admin .emp-list-note.error { color: var(--alert); }
+.page-admin .emp-list-note .emp-btn { margin-top: 10px; }
+
+/* 右の詳しい欄 */
+.page-admin .emp-detail {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
+  position: sticky;
+  top: 16px;
+  font-size: var(--fs-body);
+  line-height: 1.8;
+  color: var(--ink);
+}
+.page-admin .emp-title { font-weight: 700; font-size: var(--fs-body); margin-bottom: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.page-admin .emp-empty { color: var(--ink-sub); text-align: center; padding: 28px 0; }
+.page-admin .emp-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.page-admin .emp-label { font-size: 14px; font-weight: 700; line-height: 1.5; color: var(--ink); }
+.page-admin .emp-fixed { font-variant-numeric: tabular-nums; }
+.page-admin .emp-checks { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-bottom: 14px; }
+.page-admin .emp-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.page-admin .emp-check input { width: 18px; height: 18px; accent-color: var(--blue); }
+.page-admin .emp-hint { font-size: var(--fs-sub); line-height: 1.6; color: var(--ink-sub); }
+.page-admin .emp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.page-admin .emp-actions.right { justify-content: flex-end; }
+.page-admin .emp-actions.spaced { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.page-admin .emp-note { font-size: var(--fs-sub); color: var(--ink-sub); line-height: 1.8; margin-top: 10px; }
+/* 取り返しのつかない操作の説明 */
+.page-admin .emp-alert {
+  background: var(--alert-pale);
+  border: 1px solid var(--alert);
+  color: var(--ink);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 15px;
+  line-height: 1.8;
+  margin-bottom: 14px;
+}
+/* 仮のパスワード：1回だけ出す。大きく、数字の幅をそろえる */
+.page-admin .emp-pw {
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-h1);
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  background: var(--ground);
+  border: 2px solid var(--blue);
+  border-radius: var(--radius);
+  padding: 12px 8px;
+  text-align: center;
+  margin: 10px 0;
+  user-select: all;
+  word-break: break-all;
+}
+.page-admin .emp-msg { font-size: 15px; line-height: 1.7; margin: 0 0 12px; }
+.page-admin .emp-msg.error { color: var(--alert); }
+.page-admin .emp-msg.ok { color: var(--ok); }

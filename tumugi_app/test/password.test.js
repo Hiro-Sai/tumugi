@@ -16,8 +16,8 @@ function check(next, confirm = next, current = CURRENT) {
 }
 
 test("今のパスワードが空なら、入れるように言う", () => {
-  assert.deepEqual(check("new-pass-123", "new-pass-123", ""), { ok: false, message: "今のパスワードを入れてください" });
-  assert.deepEqual(validateNewPassword({}), { ok: false, message: "今のパスワードを入れてください" });
+  assert.deepEqual(check("new-pass-123", "new-pass-123", ""), { ok: false, message: "現在のパスワードを入力してください" });
+  assert.deepEqual(validateNewPassword({}), { ok: false, message: "現在のパスワードを入力してください" });
 });
 
 test("新しいパスワードは8文字以上（7文字はだめ、8文字は通る）", () => {
@@ -36,11 +36,11 @@ test("72バイトまで（全角24文字は通り、25文字は長すぎる）",
 });
 
 test("今と同じパスワードにはできない", () => {
-  assert.deepEqual(check(CURRENT), { ok: false, message: "今と同じパスワードにはできません" });
+  assert.deepEqual(check(CURRENT), { ok: false, message: "現在と同じパスワードにはできません" });
 });
 
 test("「もう一度」が違えば、一致しないと言う", () => {
-  assert.deepEqual(check("new-pass-123", "new-pass-124"), { ok: false, message: "新しいパスワード（もう一度）が一致しません" });
+  assert.deepEqual(check("new-pass-123", "new-pass-124"), { ok: false, message: "新しいパスワード（確認）が一致しません" });
 });
 
 test("決まりは上から順に確かめる（短くて一致しないときは、8文字の方を言う）", () => {

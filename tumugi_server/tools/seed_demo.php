@@ -111,12 +111,15 @@ const DEMO_HARASSMENT = [
 ];
 
 // まだ登録されていないデモ用アカウントだけを、DEMO_ACCOUNTS の順番で登録する。登録した人数を返す
+// 登録日と、集計に入れ始める時刻（counted_from）は、30日前にする
+// （集計に入れ始める時刻から7日たつまで、記録は集計に入らないため。すでにいる社員の分は変えない）
 function insertMissingDemoAccounts(PDO $pdo, string $password): int {
     $existingCodes = $pdo->query("SELECT employee_code FROM employees")->fetchAll(PDO::FETCH_COLUMN);
 
     $stmt = $pdo->prepare(
-        "INSERT INTO employees (employee_code, password_hash, display_name, department, is_new_grad, is_admin)
-         VALUES (:code, :hash, :name, :dept, :new_grad, :admin)"
+        "INSERT INTO employees
+            (employee_code, password_hash, display_name, department, is_new_grad, is_admin, created_at, counted_from)
+         VALUES (:code, :hash, :name, :dept, :new_grad, :admin, NOW() - INTERVAL 30 DAY, NOW() - INTERVAL 30 DAY)"
     );
 
     $added = 0;
@@ -146,14 +149,19 @@ function randomRecentTimestamp(): string {
 }
 
 function insertDemoEmotionLogs(PDO $pdo): int {
-    // 管理者（is_admin=1）のログは作らない
+    // 管理者（is_admin=1）のログは作らない（記録には、その社員の今の部署・新卒の印を入れる。
+    // is_counted は、管理者でなく、デモの社員は集計に入れ始める時刻が30日前なので 1）
     $employees = $pdo->query(
-        "SELECT id, employee_code FROM employees WHERE is_active = 1 AND is_admin = 0 ORDER BY id"
+        "SELECT id, employee_code, department, is_new_grad, is_admin
+         FROM employees WHERE is_active = 1 AND is_admin = 0 ORDER BY id"
     )->fetchAll();
 
     $stmt = $pdo->prepare(
-        "INSERT INTO emotion_logs (employee_id, emotion, negativity_score, is_crisis, harassment_type, recorded_at)
-         VALUES (:eid, :emotion, :score, :crisis, :harassment, :recorded_at)"
+        "INSERT INTO emotion_logs
+           (employee_id, emotion, negativity_score, is_crisis, harassment_type,
+            department, is_new_grad, is_counted, recorded_at)
+         VALUES (:eid, :emotion, :score, :crisis, :harassment,
+                 :dept, :new_grad, :counted, :recorded_at)"
     );
     $emotions = array_keys(EMOTION_SCORES);
     $total = 0;
@@ -171,6 +179,9 @@ function insertDemoEmotionLogs(PDO $pdo): int {
                 'score'       => $isCrisis ? CRISIS_SCORE : EMOTION_SCORES[$emotion],
                 'crisis'      => $isCrisis ? 1 : 0,
                 'harassment'  => 'none',
+                'dept'        => $emp['department'],
+                'new_grad'    => (int)$emp['is_new_grad'],
+                'counted'     => (int)$emp['is_admin'] === 1 ? 0 : 1,
                 'recorded_at' => randomRecentTimestamp(),
             ]);
             $total++;
@@ -185,6 +196,9 @@ function insertDemoEmotionLogs(PDO $pdo): int {
                 'score'       => EMOTION_SCORES['sad'],
                 'crisis'      => 0,
                 'harassment'  => $harassment,
+                'dept'        => $emp['department'],
+                'new_grad'    => (int)$emp['is_new_grad'],
+                'counted'     => (int)$emp['is_admin'] === 1 ? 0 : 1,
                 'recorded_at' => randomRecentTimestamp(),
             ]);
             $total++;

@@ -38,6 +38,7 @@ function clearConsentForExhibit() {
 
 let mainWindow = null;
 let adminWindow = null; // 管理者ダッシュボード（下の admin:open）
+const ADMIN_WINDOW_OFFSET = 32; // ダッシュボードを開くとき、チャットからずらす幅（px）
 
 // ログには URL 全体ではなく、スキームとホストだけを出す
 // （クエリに会話の内容などが含まれることがあるため）
@@ -104,13 +105,17 @@ function createWindow() {
 
   win.on("closed", () => {
     mainWindow = null;
+    // ダッシュボードは独立したウィンドウなので、チャットを閉じたら一緒に閉じる（ダッシュボードだけが残らないように）
+    if (adminWindow) adminWindow.close();
   });
 }
 
 // =========================================
 // 管理者ダッシュボードのウィンドウ
 // チャットとは別のウィンドウで開く。同じウィンドウでページを移ると、チャットの画面が作り直されて会話が消えるため。
-// チャットの上にモーダルで重ね、閉じるまでチャットは操作できない。閉じるのは「チャットに戻る」か ×。
+// チャットとは独立したウィンドウにする（親子にもモーダルにもしない）。集計を見ながら、チャットも操作できる。
+// 親子にすると、Windows ではダッシュボードがいつもチャットの手前に出て、重なった所のチャットが見えなくなるため。
+// 閉じるのは「チャットに戻る」か ×。チャットを閉じたとき・ログアウトしたときも、一緒に閉じる。
 // ダッシュボードを見せてよいかは、dashboard_data.php が DB で確かめる（ここは開くだけ）。
 // =========================================
 ipcMain.on("admin:open", (event) => {
@@ -121,10 +126,13 @@ ipcMain.on("admin:open", (event) => {
     return;
   }
 
+  // チャットと同じ大きさで、少し右下にずらして開く（チャットが下にあると分かるように）
+  const bounds = mainWindow.getBounds();
   const win = new BrowserWindow({
-    ...mainWindow.getBounds(), // チャットの画面にちょうど重ねる
-    parent: mainWindow,
-    modal: true,
+    x: bounds.x + ADMIN_WINDOW_OFFSET,
+    y: bounds.y + ADMIN_WINDOW_OFFSET,
+    width: bounds.width,
+    height: bounds.height,
     minWidth: 800,
     minHeight: 560,
     title: "つむぎ",

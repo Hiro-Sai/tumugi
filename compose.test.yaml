@@ -1,0 +1,67 @@
+# =========================================
+# つむぎ サーバーの自動テスト用の環境
+#   起動:   docker compose -f compose.test.yaml up -d --build --wait
+#   停止:   docker compose -f compose.test.yaml down
+# これは、テストのためだけの環境。デモ（compose.yaml）とは別のもの。
+#   - プロジェクト名が違うので、コンテナ・ネットワーク・データがデモと分かれる
+#   - 待ち受けは 127.0.0.1:8082（デモは 8080）。デモと同時に立てておける
+#   - DB はデータを保存しない（tmpfs）。立てるたびに、まっさらな状態から始まる
+# DB の名前・ユーザー・パスワードは、テスト専用の値をここに直接書く（.env は使わない）。
+# この DB はポートを外に出さず、中身もテスト用のデータだけなので、秘密ではない。
+# =========================================
+
+# フォルダ名からはデモと同じ名前になってしまうため、明示して分ける
+name: tumugi-test
+
+services:
+  db:
+    image: mysql:8.4
+    command: ["--default-time-zone=+09:00"]
+    environment:
+      MYSQL_DATABASE: tumugi_test
+      MYSQL_USER: tumugi_test
+      MYSQL_PASSWORD: tumugi_test_only
+      # root のパスワードは使わないので、ランダムにする（"1" は「ランダムにする」という合図）
+      MYSQL_RANDOM_ROOT_PASSWORD: "1"
+      TZ: Asia/Tokyo
+    tmpfs:
+      - /var/lib/mysql
+    volumes:
+      - ./tumugi_server/sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      # 初期化中の一時サーバーは TCP を受け付けないため、127.0.0.1（TCP）で確認する。
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -utumugi_test -ptumugi_test_only --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    # ports は書かない（DB はコンテナ同士の通信だけで使い、外部に公開しない）
+    # backend だけにつなぐ（インターネットに出られない）
+    networks: [backend]
+
+  app:
+    build: ./docker/app
+    environment:
+      DB_HOST: db
+      DB_NAME: tumugi_test
+      DB_USER: tumugi_test
+      DB_PASS: tumugi_test_only
+      TZ: Asia/Tokyo
+    volumes:
+      - ./tumugi_server:/var/www/tumugi:ro
+      # テストのデータ用スクリプト。Apache が外に出すのは /api だけなので、ウェブからは呼べない
+      - ./tests/server/fixtures:/var/www/tumugi-test-tools:ro
+    ports:
+      - "127.0.0.1:8082:80"
+    # デモと同じ分け方。backend は db への接続用、frontend はポート公開用
+    networks: [backend, frontend]
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  # DB 用の内部ネットワーク。internal: true のため、ここだけにつながるコンテナはインターネットに出られない
+  backend:
+    internal: true
+  # ポート公開（127.0.0.1 のみ）用
+  frontend: {}

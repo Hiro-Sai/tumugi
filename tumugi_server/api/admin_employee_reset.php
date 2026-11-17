@@ -9,11 +9,12 @@
 //   ログインの失敗も消す（includes/employee_admin.php の setTempPassword）。
 //   仮のパスワードが出るのは、この応答だけ（ログにも操作の記録にも残さない）。
 // - 自分自身はリセットできない（自分のパスワードは、チャットの「設定」から変える）。
-// - 操作の記録：action は reset_password。
+// - 操作の記録：action は reset_password。本人あての知らせ（employee_notices の password_reset）も残す。
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
 require_once __DIR__ . '/../includes/employee_admin.php';
+require_once __DIR__ . '/../includes/notices.php';
 setCorsHeaders();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -43,6 +44,7 @@ if ($target['id'] === $admin['id']) {
 $tempPassword = setTempPassword($pdo, $target['id'], $target['employee_code']);
 
 recordAdminAction($pdo, $admin['employee_code'], 'reset_password', $target['employee_code']);
+recordEmployeeNotice($pdo, $target['id'], 'password_reset');
 
 $pdo->commit();
 

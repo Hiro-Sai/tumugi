@@ -7,12 +7,14 @@
 //
 // - 退職にする：自分自身と、最後の在籍の管理者は止める。その社員のトークンをすべて消す（すぐ使えなくなる）。
 //   操作の記録：action は deactivate。
-// - 在籍に戻す：パスワードは変えない。操作の記録：action は reactivate。
+// - 在籍に戻したときは、本人あての知らせ（employee_notices の reactivated）も残す。退職にしても残さない。
+// - 在籍に戻す：パスワードは変えない。集計に入れ始める時刻（counted_from）を今にする。操作の記録：action は reactivate。
 // - 今と同じ状態なら、何も書き込まず、記録も残さずに ok を返す。
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
 require_once __DIR__ . '/../includes/employee_admin.php';
+require_once __DIR__ . '/../includes/notices.php';
 setCorsHeaders();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -47,10 +49,12 @@ if ($makeActive) {
         exit;
     }
 
-    $update = $pdo->prepare("UPDATE employees SET is_active = 1 WHERE id = :id");
+    // 退職から戻した社員は、そこから7日は集計に入れない（集計に入れ始める時刻 counted_from を今にする）
+    $update = $pdo->prepare("UPDATE employees SET is_active = 1, counted_from = NOW() WHERE id = :id");
     $update->execute(['id' => $target['id']]);
 
     recordAdminAction($pdo, $admin['employee_code'], 'reactivate', $target['employee_code']);
+    recordEmployeeNotice($pdo, $target['id'], 'reactivated');
 } else {
     // 退職にする
     if ($target['id'] === $admin['id']) {

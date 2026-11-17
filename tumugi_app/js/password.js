@@ -21,13 +21,13 @@
     const nxt = String(next ?? "");
     const again = String(confirm ?? "");
 
-    if (cur === "") return { ok: false, message: "今のパスワードを入れてください" };
+    if (cur === "") return { ok: false, message: "現在のパスワードを入力してください" };
     if (Array.from(nxt).length < MIN_CHARS) return { ok: false, message: "新しいパスワードは8文字以上にしてください" };
     if (new TextEncoder().encode(nxt).length > MAX_BYTES) {
       return { ok: false, message: "新しいパスワードが長すぎます（72バイトまで。全角なら24文字程度）" };
     }
-    if (nxt === cur) return { ok: false, message: "今と同じパスワードにはできません" };
-    if (nxt !== again) return { ok: false, message: "新しいパスワード（もう一度）が一致しません" };
+    if (nxt === cur) return { ok: false, message: "現在と同じパスワードにはできません" };
+    if (nxt !== again) return { ok: false, message: "新しいパスワード（確認）が一致しません" };
     return { ok: true };
   }
 

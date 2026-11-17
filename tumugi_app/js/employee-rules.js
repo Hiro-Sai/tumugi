@@ -50,11 +50,11 @@
     }
 
     const nameLength = charLength(values.name);
-    if (nameLength === 0) return { ok: false, message: "名前を入れてください" };
-    if (nameLength > TEXT_MAX_CHARS) return { ok: false, message: "名前は50文字までにしてください" };
+    if (nameLength === 0) return { ok: false, message: "氏名を入力してください" };
+    if (nameLength > TEXT_MAX_CHARS) return { ok: false, message: "氏名は50文字までにしてください" };
 
     const departmentLength = charLength(values.department);
-    if (departmentLength === 0) return { ok: false, message: "部署を入れてください" };
+    if (departmentLength === 0) return { ok: false, message: "部署を入力してください" };
     if (departmentLength > TEXT_MAX_CHARS) return { ok: false, message: "部署は50文字までにしてください" };
 
     return { ok: true, values };

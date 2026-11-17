@@ -19,6 +19,7 @@ CREATE TABLE employees (
   display_name   VARCHAR(50)  NOT NULL,             -- 表示名（ダッシュボードには出さない）
   department     VARCHAR(50)  NOT NULL,             -- 部署名（集計単位）
   created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  counted_from   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 集計に入れ始める時刻（ここから7日たつまでの記録は、集計に入れない）。登録の時刻で始まり、仮のパスワードを自分のものに変えたとき・在籍に戻したとき・管理者の印を外したときに、今の時刻にする
   is_active      TINYINT(1)   NOT NULL DEFAULT 1,   -- 在籍フラグ
   is_new_grad    TINYINT(1)   NOT NULL DEFAULT 0,   -- 新卒フラグ（新卒集計に使う）
   is_admin       TINYINT(1)   NOT NULL DEFAULT 0,   -- 管理者フラグ（ダッシュボードを閲覧できる）
@@ -36,6 +37,9 @@ CREATE TABLE emotion_logs (
   is_crisis         TINYINT(1)   NOT NULL DEFAULT 0,        -- 危機検知フラグ
   recorded_at       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   harassment_type   ENUM('none','received','said') NOT NULL DEFAULT 'none',
+  department        VARCHAR(50)  NOT NULL,                  -- 記録した時点の部署（employees.department から写す。集計はこれを使う）
+  is_new_grad       TINYINT(1)   NOT NULL DEFAULT 0,        -- 記録した時点の新卒の印
+  is_counted        TINYINT(1)   NOT NULL DEFAULT 1,        -- 集計に入れるか（管理者の記録と、employees.counted_from から7日以内の記録は 0。記録した時点で決める）
   FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   INDEX idx_employee_date (employee_id, recorded_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -78,4 +82,21 @@ CREATE TABLE admin_audit_logs (
   detail       VARCHAR(255) NULL,       -- update のとき、変えた項目の名前（例：department,is_admin）。値は入れない
   created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- -----------------------------------------
+-- 本人あての知らせ（所属の変更など）
+-- kind: department（old・new は部署名）/ new_grad・admin（old・new は "1" か "0"）
+--       / reactivated・password_reset（old・new は NULL）
+-- -----------------------------------------
+CREATE TABLE employee_notices (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  employee_id  INT         NOT NULL,
+  kind         VARCHAR(20) NOT NULL,
+  old_value    VARCHAR(50) NULL,
+  new_value    VARCHAR(50) NULL,
+  created_at   TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  seen_at      DATETIME    NULL,           -- 本人が見た時刻（NULL：まだ見ていない）
+  FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  INDEX idx_employee_created (employee_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

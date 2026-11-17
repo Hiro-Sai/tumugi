@@ -7,36 +7,14 @@
 // エラーメッセージとして表示される（このページの表示制御はUIの都合のみ）。
 // =========================================
 
+// ハラスメントに関する発言の、表に出す順番と名前
 const HARASSMENT_LABELS = {
-  received: "受けた",
-  said: "言ってしまった",
-};
-const HARASSMENT_COLORS = {
-  received: { from: "#e0a070", to: "#b8733f" },
-  said:     { from: "#d4894a", to: "#b87333" },
+  received: "受けたという発言",
+  said: "言ってしまったという発言",
 };
 
-// 最後に描いたグラフのデータ。グラフの大きさが変わったときの描き直しに使う
-let lastChartBars = [];
-let lastHarassmentCats = [];
-
-// Canvasの絵は描いた時点の画素数で固定されるため、ウィンドウの大きさや
-// 画面の拡大率（拡大率の違うモニターへの移動を含む）が変わると、描き直さない限り
-// 引き伸ばされてぼやける。実際の画素数（device-pixel-content-box）の変化を見て描き直す。
-const chartResizeObserver = new ResizeObserver(entries => {
-  for (const entry of entries) {
-    if (entry.target.id === "chartCanvas") drawBarChart(lastChartBars);
-    else if (entry.target.id === "harassmentChartCanvas") drawHarassmentChart(lastHarassmentCats);
-  }
-});
-
-function observeChartResize() {
-  chartResizeObserver.disconnect();
-  ["chartCanvas", "harassmentChartCanvas"].forEach(id => {
-    const canvas = document.getElementById(id);
-    if (canvas) chartResizeObserver.observe(canvas, { box: "device-pixel-content-box" });
-  });
-}
+// 棒の幅・点数の文・まれな事象の文は、js/dashboard-view.js にある（値を返すだけの関数）
+const { barPercent, scoreText, rareEventText } = TumugiDashboardView;
 
 async function loadDashboard() {
   const content = document.getElementById("adminContent");
@@ -56,8 +34,8 @@ async function loadDashboard() {
       return;
     }
     content.innerHTML = res.reason === "connection_refused"
-      ? '<p class="admin-error">サーバーに接続できませんでした。サーバーが起動しているか確認してください</p>'
-      : `<p class="admin-error">${escapeHtml(res.data?.error || "データの取得に失敗しました")}</p>`;
+      ? '<p class="admin-error" role="alert">サーバーに接続できませんでした。サーバーが起動しているか確認してください。</p>'
+      : `<p class="admin-error" role="alert">${escapeHtml(res.data?.error || "集計データを取得できませんでした。")}</p>`;
     return;
   }
 
@@ -87,18 +65,24 @@ function renderDashboard(data) {
     });
   }
 
-  const harassmentCountCats = buildHarassmentCountCats(harassment);
-  lastChartBars = chartBars;
-  lastHarassmentCats = harassmentCountCats;
+  const sectionTitle = '<h2 class="admin-section-title">直近7日間の平均ネガティブスコア</h2>';
+
+  const min = escapeHtml(String(minDeptSize));
+  // 説明の文。出せるグループが無いときも出す（なぜ出ないかが分かるように）
+  const leadHtml = `<p class="lead">数値（0〜100）が大きいほど、ネガティブな感情の記録が多いことを示します。社員ごとの平均値を、グループ単位で平均しています。個人の特定を防ぐため、直近7日間に記録のある社員が${min}名未満のグループは表示しません。危機的な発言は、該当する社員が${min}名未満のときは件数を表示せず「あり」とだけ表示します。管理者の記録と、仮のパスワードを変えてから（在籍に戻したとき・管理者の権限を外したときは、そこから）7日間の記録は、集計に入りません。退職した社員の記録は、7日たつまで集計に残ります。</p>`;
 
   if (chartBars.length === 0) {
+    // 出せるグループが1つも無いとき。理由（サーバーの note）を、1つの面にまとめて出す
     content.innerHTML = `
-      <div class="admin-note">${escapeHtml(data.note || "現在表示できる部署がありません。")}</div>
-      ${data.new_grad_note ? `<div class="admin-note">${escapeHtml(data.new_grad_note)}</div>` : ""}
+      ${sectionTitle}
+      ${leadHtml}
+      <div class="panel empty">
+        <h3>現在、表示できるグループがありません</h3>
+        <p>${escapeHtml(data.note || "現在表示できる部署がありません。")}</p>
+        ${data.new_grad_note ? `<p>${escapeHtml(data.new_grad_note)}</p>` : ""}
+      </div>
       ${renderHarassmentCard(harassment, minDeptSize)}
     `;
-    if (harassmentCountCats.length > 0) drawHarassmentChart(harassmentCountCats);
-    observeChartResize();
     return;
   }
 
@@ -107,271 +91,79 @@ function renderDashboard(data) {
     (!newGrad && data.new_grad_note) ? `<div class="admin-note">${escapeHtml(data.new_grad_note)}</div>` : "",
   ].join("");
 
+  // 棒の幅は barPercent（0〜100 の数）。CSP は style 属性を許している（style-src 'unsafe-inline'）
+  const barsHtml = chartBars.map(d => `
+    <span class="bar-name">${escapeHtml(d.department)}</span>
+    <div class="track"><div class="fill${d.isNewGrad ? " grad" : ""}" style="width:${barPercent(d.avg_score)}%"></div></div>
+    <span class="num">${escapeHtml(scoreText(d.avg_score))}</span>
+  `).join("");
+
+  const rowsHtml = chartBars.map(d => `
+    <tr>
+      <td class="name">${escapeHtml(d.department)}</td>
+      <td class="n">${escapeHtml(scoreText(d.avg_score))}</td>
+      <td class="n">${escapeHtml(d.log_count ?? 0)}</td>
+      <td>${renderRareTag(d.crisis)}</td>
+    </tr>
+  `).join("");
+
   content.innerHTML = `
+    ${sectionTitle}
+    ${leadHtml}
     ${notesHtml}
-    <div class="admin-note">
-      直近7日間の部署別・新卒別 平均ネガティブスコア（0〜100）。社員ごとの平均を、グループで平均しています。個人特定リスク対策として、直近7日間に記録がある社員が${escapeHtml(String(minDeptSize))}名未満のグループは表示していません。危機検知は、該当者が${escapeHtml(String(minDeptSize))}名未満のときは件数を出さず「あり」とだけ表示します。
+    <div class="panel">
+      <h3>部署別・新卒</h3>
+      <div class="bars">${barsHtml}</div>
     </div>
-    <div class="admin-card">
-      <div class="admin-card-title">部署別・新卒別 平均スコア</div>
-      <canvas id="chartCanvas"></canvas>
-      <div class="chart-legend">
-        <span><span class="legend-dot legend-dot-dept"></span>部署</span>
-        <span><span class="legend-dot legend-dot-newgrad"></span>新卒（全社）</span>
-      </div>
-    </div>
-    <div class="admin-card">
-      <div class="admin-card-title">詳細データ</div>
-      <table class="admin-table">
+    <div class="panel">
+      <h3>詳細データ</h3>
+      <table>
         <thead>
           <tr>
-            <th>グループ</th>
-            <th>平均スコア</th>
-            <th>ログ件数</th>
-            <th>危機検知</th>
+            <th scope="col">グループ</th>
+            <th scope="col" class="n">平均スコア</th>
+            <th scope="col" class="n">記録件数</th>
+            <th scope="col">危機的な発言</th>
           </tr>
         </thead>
-        <tbody>
-          ${chartBars.map(d => `
-            <tr>
-              <td>${escapeHtml(d.department)}${d.isNewGrad ? '<span class="new-grad-badge">新卒</span>' : ""}</td>
-              <td>${escapeHtml(d.avg_score ?? "-")}</td>
-              <td>${escapeHtml(d.log_count ?? 0)}</td>
-              ${renderCrisisCell(d.crisis)}
-            </tr>
-          `).join("")}
-        </tbody>
+        <tbody>${rowsHtml}</tbody>
       </table>
     </div>
     ${renderHarassmentCard(harassment, minDeptSize)}
   `;
-
-  drawBarChart(chartBars);
-  if (harassmentCountCats.length > 0) drawHarassmentChart(harassmentCountCats);
-  observeChartResize();
 }
 
-// 危機検知の欄。サーバーが該当人数で3段階に分けて返す（dashboard_data.php の rareEventDisplay）
-//   count → 件数、flag_only → 「あり（人数非公開）」、none → 0
-function renderCrisisCell(crisis) {
-  const display = crisis?.display ?? "none";
-  if (display === "count") {
-    return `<td class="crisis-cell">${escapeHtml(crisis.count ?? 0)}</td>`;
-  }
-  if (display === "flag_only") {
-    return '<td class="crisis-cell">あり（人数非公開）</td>';
-  }
-  return "<td>0</td>";
+// まれな事象の欄。サーバーが該当人数で3段階に分けて返す（dashboard_data.php の rareEventDisplay）
+//   count → 件数、flag_only → 「あり（人数は非表示）」、none → 「なし」
+// 文は dashboard-view.js の rareEventText。count と flag_only は目立つ色の札にする
+function renderRareTag(event) {
+  const display = event?.display ?? "none";
+  const warn = display === "count" || display === "flag_only";
+  return `<span class="tag${warn ? " warn" : ""}">${escapeHtml(rareEventText(display, event?.count))}</span>`;
 }
 
-// harassmentオブジェクトから、実際に棒グラフとして描画すべき
-// （display === "count" の）カテゴリだけを抜き出す
-function buildHarassmentCountCats(harassment) {
-  return Object.keys(HARASSMENT_LABELS)
-    .filter(key => harassment[key] && harassment[key].display === "count")
-    .map(key => ({
-      key,
-      label: HARASSMENT_LABELS[key],
-      value: harassment[key].count ?? 0,
-    }));
-}
-
-// ハラスメントカードのHTML断片を組み立てる。
-// カテゴリごとに display が "count"（棒グラフ表示） / "flag_only"
-// （件数非公開・存在のみのバッジ） / "none"（何も出さない）に分かれる。
+// ハラスメントの欄のHTML断片を組み立てる。
+// 種類ごとに display が "count"（件数を出す） / "flag_only"（あるとだけ出す） / "none"（なし）に分かれる。
 function renderHarassmentCard(harassment, minDeptSize) {
-  const countCats = buildHarassmentCountCats(harassment);
-  const flagKeys = Object.keys(HARASSMENT_LABELS)
-    .filter(key => harassment[key] && harassment[key].display === "flag_only");
-
-  if (countCats.length === 0 && flagKeys.length === 0) {
-    return `
-      <div class="admin-card">
-        <div class="admin-card-title">ハラスメント傾向（全社・直近7日間）</div>
-        <div class="admin-note" style="margin-bottom:0;">現在、ハラスメント関連の申告はありません。</div>
-      </div>
-    `;
-  }
-
-  const flagBadgesHtml = flagKeys.map(key => `
-    <div class="harassment-flag-note">
-      ⚠️ 「${escapeHtml(HARASSMENT_LABELS[key])}」に該当する申告が直近7日間であります。該当人数が${escapeHtml(String(minDeptSize))}名未満のため、個人特定防止の観点から具体的な件数は表示していません。
-    </div>
+  const min = escapeHtml(String(minDeptSize));
+  const rowsHtml = Object.keys(HARASSMENT_LABELS).map(key => `
+    <tr>
+      <td>${escapeHtml(HARASSMENT_LABELS[key])}</td>
+      <td>${renderRareTag(harassment[key])}</td>
+    </tr>
   `).join("");
 
-  const chartHtml = countCats.length > 0
-    ? `<canvas id="harassmentChartCanvas"></canvas>`
-    : "";
-
   return `
-    <div class="admin-card">
-      <div class="admin-card-title">ハラスメント傾向（全社・直近7日間）</div>
-      <div class="admin-note" style="margin-bottom:16px;">
-        部署別ではなく全社ひとまとまりで集計しています（まれな事象のため、部署別に出すと少人数部署で個人が特定されうるための対応です）。「受けた」はハラスメントを受けたと述べた件数、「言ってしまった」は自分がハラスメント的な言動をしてしまったと述べた件数です。
-      </div>
-      ${chartHtml}
-      ${flagBadgesHtml}
+    <div class="panel">
+      <h3>ハラスメントに関する発言（全社・直近7日間）</h3>
+      <p class="hint">部署別ではなく、全社をまとめて集計しています（部署別に出すと、少人数の部署で個人が特定されるおそれがあるためです）。「受けたという発言」はハラスメントを受けたと述べた件数、「言ってしまったという発言」は自分がハラスメントに当たる言動をしてしまったと述べた件数です。</p>
+      <table>
+        <thead><tr><th scope="col">種類</th><th scope="col">状況</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <p class="hint">件数は、同じ種類の発言をした社員が${min}名以上の場合にのみ表示します。${min}名未満のときは、個人の特定を防ぐため「あり」とだけ表示し、件数は表示しません。</p>
     </div>
   `;
-}
-
-// シンプルな棒グラフをCanvasで描画（外部ライブラリ不使用）
-// 新卒バーは isNewGrad フラグで色を差別化する
-function drawBarChart(departments) {
-  const canvas = document.getElementById("chartCanvas");
-  if (!canvas) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  const cssWidth  = canvas.clientWidth || canvas.parentElement.clientWidth;
-  const cssHeight = 260;
-  canvas.width  = cssWidth * dpr;
-  canvas.height = cssHeight * dpr;
-  canvas.style.height = cssHeight + "px";
-
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-  const padding = { top: 16, right: 16, bottom: 40, left: 36 };
-  const chartW = cssWidth - padding.left - padding.right;
-  const chartH = cssHeight - padding.top - padding.bottom;
-  const maxScore = 100;
-  const barGap = 24;
-  const barW = Math.min(34, (chartW - barGap * (departments.length - 1)) / departments.length);
-
-  const styles = getComputedStyle(document.documentElement);
-  const amberGlow = styles.getPropertyValue("--amber-glow").trim() || "#C97A3D";
-  const amberDim  = styles.getPropertyValue("--amber-dim").trim() || "#A8631E";
-  const cream     = styles.getPropertyValue("--cream").trim() || "#2B2018";
-  const divider   = "rgba(43,32,24,0.12)";
-  // 新卒バー用の差別化カラー（既存パレットに寄せた寒色系アクセント）
-  const newGradGlow = "#5a9bd4";
-  const newGradDim  = "#3f6f99";
-
-  // 横軸の基準線（0, 50, 100）
-  ctx.strokeStyle = divider;
-  ctx.fillStyle = cream;
-  ctx.font = "10px 'DM Sans', sans-serif";
-  ctx.globalAlpha = 0.5;
-  [0, 50, 100].forEach(val => {
-    const y = padding.top + chartH - (val / maxScore) * chartH;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(padding.left + chartW, y);
-    ctx.stroke();
-    ctx.fillText(String(val), 6, y + 3);
-  });
-  ctx.globalAlpha = 1;
-
-  // 棒本体
-  const totalBarsWidth = barW * departments.length + barGap * (departments.length - 1);
-  let x = padding.left + Math.max(0, (chartW - totalBarsWidth) / 2);
-
-  departments.forEach(d => {
-    const score = Math.max(0, Math.min(100, Number(d.avg_score) || 0));
-    const barH = (score / maxScore) * chartH;
-    const y = padding.top + chartH - barH;
-
-    const gradient = ctx.createLinearGradient(0, y, 0, y + barH);
-    if (d.isNewGrad) {
-      gradient.addColorStop(0, newGradGlow);
-      gradient.addColorStop(1, newGradDim);
-    } else {
-      gradient.addColorStop(0, amberGlow);
-      gradient.addColorStop(1, amberDim);
-    }
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(x, y, barW, barH, 4) : ctx.rect(x, y, barW, barH);
-    ctx.fill();
-
-    // スコア数値
-    ctx.fillStyle = cream;
-    ctx.globalAlpha = 0.85;
-    ctx.font = "11px 'DM Sans', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(score.toFixed(1), x + barW / 2, y - 6);
-    ctx.globalAlpha = 1;
-
-    // 部署名／グループ名ラベル（Canvasの描画はHTMLパースしないためescapeHtml不要）
-    ctx.font = "11px 'Noto Sans JP', sans-serif";
-    ctx.fillText(d.department, x + barW / 2, padding.top + chartH + 18);
-
-    x += barW + barGap;
-  });
-
-  ctx.textAlign = "left";
-}
-
-// ハラスメント傾向の棒グラフ。display==="count"のカテゴリだけが渡される
-// （0本・1本・2本のいずれもあり得る）。件数（生の整数）なので、
-// drawBarChartの0-100スケール前提とは別の専用描画関数にしている。
-function drawHarassmentChart(countCats) {
-  const canvas = document.getElementById("harassmentChartCanvas");
-  if (!canvas || countCats.length === 0) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  const cssWidth  = canvas.clientWidth || canvas.parentElement.clientWidth;
-  const cssHeight = 220;
-  canvas.width  = cssWidth * dpr;
-  canvas.height = cssHeight * dpr;
-  canvas.style.height = cssHeight + "px";
-
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, cssWidth, cssHeight);
-
-  const padding = { top: 28, right: 16, bottom: 40, left: 16 };
-  const chartW = cssWidth - padding.left - padding.right;
-  const chartH = cssHeight - padding.top - padding.bottom;
-
-  const bars = countCats.map(c => ({
-    label: c.label,
-    value: c.value,
-    colorFrom: (HARASSMENT_COLORS[c.key] || HARASSMENT_COLORS.said).from,
-    colorTo:   (HARASSMENT_COLORS[c.key] || HARASSMENT_COLORS.said).to,
-  }));
-
-  const maxValue = Math.max(1, ...bars.map(b => b.value));
-  const barW = 50;
-  const barGap = 48;
-
-  const styles = getComputedStyle(document.documentElement);
-  const cream = styles.getPropertyValue("--cream").trim() || "#2B2018";
-
-  const totalBarsWidth = barW * bars.length + barGap * (bars.length - 1);
-  let x = padding.left + Math.max(0, (chartW - totalBarsWidth) / 2);
-
-  bars.forEach(b => {
-    const barH = Math.max((b.value / maxValue) * chartH, b.value > 0 ? 4 : 0);
-    const y = padding.top + chartH - barH;
-
-    const gradient = ctx.createLinearGradient(0, y, 0, y + Math.max(barH, 1));
-    gradient.addColorStop(0, b.colorFrom);
-    gradient.addColorStop(1, b.colorTo);
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    if (ctx.roundRect) {
-      ctx.roundRect(x, y, barW, Math.max(barH, 1), 4);
-    } else {
-      ctx.rect(x, y, barW, Math.max(barH, 1));
-    }
-    ctx.fill();
-
-    ctx.fillStyle = cream;
-    ctx.globalAlpha = 0.9;
-    ctx.font = "13px 'DM Sans', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(String(b.value), x + barW / 2, y - 8);
-    ctx.globalAlpha = 1;
-
-    ctx.font = "11px 'Noto Sans JP', sans-serif";
-    ctx.fillText(b.label, x + barW / 2, padding.top + chartH + 20);
-
-    x += barW + barGap;
-  });
-
-  ctx.textAlign = "left";
 }
 
 window.onload = loadDashboard;

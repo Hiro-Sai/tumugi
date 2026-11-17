@@ -8,58 +8,55 @@
   <title>つむぎ ログイン</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
+<body class="page-login">
 
-  <div class="bg-overlay"></div>
-  <div class="bg-vignette"></div>
-  <div class="bg-noise"></div>
+  <div class="login">
+    <!-- 左：立ち絵（飾り）と、つむぎの説明 -->
+    <div class="login-side">
+      <div class="figure"><img src="images/normal_open.png" alt=""></div>
+      <h1>つむぎ</h1>
+      <p>仕事や気持ちについて、<br>何でも話せる相手です。</p>
+    </div>
 
-  <div style="position:relative; z-index:1; min-height:100vh; display:flex; align-items:center; justify-content:center;">
-    <div class="setup-card">
-      <p class="setup-sub">empathy AI</p>
-      <h2 class="setup-title">つむぎ</h2>
+    <!-- 右：入力 -->
+    <div class="login-form">
 
       <!-- 1段目：社員IDとパスワードでログインする -->
-      <div id="loginStep" style="width:100%;">
-        <p class="setup-desc">社員IDとパスワードでログインしてください</p>
-
-        <div class="setup-fields">
-          <div class="setup-field">
-            <label class="setup-label">社員ID</label>
-            <input type="text" id="loginEmployeeCode" class="setup-input" placeholder="E001" autocomplete="username">
-          </div>
-          <div class="setup-field">
-            <label class="setup-label">パスワード</label>
-            <input type="password" id="loginPassword" class="setup-input" placeholder="••••••••" autocomplete="current-password">
-          </div>
+      <div id="loginStep" class="login-step">
+        <h2>ログイン</h2>
+        <div class="field">
+          <label for="loginEmployeeCode">社員ID</label>
+          <input type="text" id="loginEmployeeCode" autocomplete="username">
         </div>
-
-        <p id="loginError" style="color:#B23A2A; font-size:11.5px; font-family:'Noto Sans JP',sans-serif; opacity:0.9; margin-bottom:14px; min-height:1.2em; text-align:center;"></p>
-
-        <button class="setup-btn" id="loginSubmitBtn">ログイン</button>
+        <div class="field">
+          <label for="loginPassword">パスワード</label>
+          <input type="password" id="loginPassword" autocomplete="current-password">
+          <span class="hint">パスワードを忘れた場合は、管理者に連絡すると、仮のパスワードが発行されます。</span>
+        </div>
+        <p id="loginError" class="login-error" role="alert"></p>
+        <button class="btn" id="loginSubmitBtn">ログイン</button>
       </div>
 
       <!-- 2段目：仮のパスワードでログインしたとき、新しいパスワードを決める（初めは隠しておく） -->
-      <div id="passwordChangeStep" style="width:100%;" hidden>
-        <h3 style="font-family:var(--font-jp); font-size:15px; font-weight:600; color:var(--amber-pale); letter-spacing:0.08em; text-align:center; margin-bottom:10px;">新しいパスワードを決めてください</h3>
-        <p class="setup-desc">管理者から伝えられた仮のパスワードは、ここで新しいパスワードに変えてください</p>
-
-        <div class="setup-fields">
-          <div class="setup-field">
-            <label class="setup-label">新しいパスワード</label>
-            <input type="password" id="firstNewPassword" class="setup-input" placeholder="••••••••" autocomplete="new-password">
-          </div>
-          <div class="setup-field">
-            <label class="setup-label">新しいパスワード（もう一度）</label>
-            <input type="password" id="firstConfirmPassword" class="setup-input" placeholder="••••••••" autocomplete="new-password">
-          </div>
+      <div id="passwordChangeStep" class="login-step" hidden>
+        <h2>新しいパスワードの設定</h2>
+        <p>管理者から伝えられた仮のパスワードを、新しいパスワードに変更してください。</p>
+        <div class="field">
+          <label for="firstNewPassword">新しいパスワード</label>
+          <input type="password" id="firstNewPassword" autocomplete="new-password">
+          <span class="hint">8文字以上</span>
         </div>
-
-        <p id="firstPasswordError" style="color:#B23A2A; font-size:11.5px; font-family:'Noto Sans JP',sans-serif; opacity:0.9; margin-bottom:14px; min-height:1.2em; text-align:center;"></p>
-
-        <button class="setup-btn" id="firstPasswordSubmitBtn">変えてはじめる</button>
-        <button class="setup-skip" id="firstPasswordCancelBtn" style="display:block; margin:0 auto;">やめる</button>
+        <div class="field">
+          <label for="firstConfirmPassword">新しいパスワード（確認）</label>
+          <input type="password" id="firstConfirmPassword" autocomplete="new-password">
+        </div>
+        <p id="firstPasswordError" class="login-error" role="alert"></p>
+        <div class="login-actions">
+          <button class="btn" id="firstPasswordSubmitBtn">変更して始める</button>
+          <button class="btn quiet" id="firstPasswordCancelBtn">キャンセル</button>
+        </div>
       </div>
+
     </div>
   </div>
 

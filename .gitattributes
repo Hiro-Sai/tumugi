@@ -18,3 +18,11 @@
 # 公開用に写すとき（git archive）に入れないもの：実装の計画（長い手順書なので、開発ログと設計書だけを公開する）
 docs/superpowers/plans export-ignore
 docs/superpowers/plans/** export-ignore
+
+# コードのレビューの修正案（まだ直していない点の一覧）。直してから公開する
+docs/review export-ignore
+docs/review/** export-ignore
+
+# B1（最低人数の守りのすり抜け）の設計書。直す前の弱点の中身を細かく書いているので、公開しない
+# （直したことと残る弱点は、README と開発ログに書いた）
+docs/superpowers/specs/2026-11-13-b1-min-size-bypass-design.md export-ignore

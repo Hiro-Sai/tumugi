@@ -18,9 +18,9 @@ const {
 
 const MSG_CODE       = "社員IDは英数字・-・_ の1〜20文字にしてください";
 const MSG_RESERVED_CODE = "社員ID「CLI」は、管理者を作る道具の記録に使うため、登録できません";
-const MSG_NAME_EMPTY = "名前を入れてください";
-const MSG_NAME_LONG  = "名前は50文字までにしてください";
-const MSG_DEPT_EMPTY = "部署を入れてください";
+const MSG_NAME_EMPTY = "氏名を入力してください";
+const MSG_NAME_LONG  = "氏名は50文字までにしてください";
+const MSG_DEPT_EMPTY = "部署を入力してください";
 const MSG_DEPT_LONG  = "部署は50文字までにしてください";
 
 // 登録フォームの入力。指定しなかった項目は、正しい値にする

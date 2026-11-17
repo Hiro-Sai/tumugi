@@ -13,6 +13,7 @@ tumugi_app/images/*.png
 # ===== 手動バックアップ =====
 tumugi_app.zip
 tumugi_backup_*/
+tumugi-backup*.sql
 
 # ===== OS =====
 Thumbs.db

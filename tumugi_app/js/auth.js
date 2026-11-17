@@ -161,7 +161,7 @@ function showPasswordChangeStep(tempPassword, employeeId) {
   if (errorEl) errorEl.textContent = "";
   if (btn) {
     btn.disabled = false;
-    btn.textContent = "変えてはじめる";
+    btn.textContent = "変更して始める";
   }
 
   if (loginStep) loginStep.hidden = true;
@@ -228,7 +228,7 @@ async function submitPasswordChangeStep() {
       if (errorEl) {
         errorEl.textContent = res.reason === "connection_refused"
           ? "サーバーに接続できませんでした。サーバーが起動しているか確認してください"
-          : (res.data?.error || "パスワードを変えられませんでした");
+          : (res.data?.error || "パスワードを変更できませんでした");
       }
       return;
     }
@@ -246,7 +246,7 @@ async function submitPasswordChangeStep() {
     // 成功・401 のときは 2段目を終えているので、ボタンはそのまま（画面が切り替わる）
     if (pendingTempPassword !== null && btn) {
       btn.disabled = false;
-      btn.textContent = "変えてはじめる";
+      btn.textContent = "変更して始める";
     }
   }
 }

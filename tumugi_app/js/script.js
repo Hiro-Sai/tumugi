@@ -4,6 +4,8 @@ const chatArea = document.getElementById("chatArea");
 let currentEmotion = "normal";
 let isBlinking     = false;
 let isSpeaking     = false;
+let isReady        = false; // 起動してから、一度でも入力できるようになったか（状態の表示用）
+let isBusy         = false; // 発言を処理している間（setButtonBusy が切り替える）。入力欄と送信、話題の例を止める
 let mouthOpen      = false; // 声に合わせて口が開いているか（playVoice が切り替える）
 
 // =========================
@@ -493,16 +495,57 @@ randomBlink();
 
 // =========================
 // チャット追加
-// 足した吹き出しの要素を返す（返事の line を少しずつ出すときに、あとから書き換えるため）
+// 1つの発言は「名前と時刻の行」＋「文の吹き出し」を1組にして足す。日が変わっていたら、先に日の区切りを入れる。
+// 戻り値は、文の吹き出しの要素（返事の line を少しずつ出すときに、あとから textContent を書き換えるため）。
+// 吹き出しを消すときは removeBubble を使う（名前と時刻の行ごと消える）。
+// 文は textContent で入れる（innerHTML は使わない）。
 // =========================
-function addMessage(text, sender) {
+let lastDayKey = null; // 最後に発言を足した日（日の区切りを入れるかの判断用）
+
+function addMessage(text, sender, extraClass = "") {
+  const now = new Date();
+  if (TumugiChatView.needsDaySeparator(lastDayKey, now)) {
+    const day = document.createElement("p");
+    day.className = "day";
+    day.dataset.time = String(now.getTime()); // あとで「今日」→「昨日」に直すために、日を覚えておく
+    chatArea.appendChild(day);
+    lastDayKey = TumugiChatView.dayKey(now);
+    // 日をまたいで開いたままのとき：前の区切りの文（今日 → 昨日）と、見出しの日付を直す
+    chatArea.querySelectorAll(".day").forEach((el) => {
+      el.textContent = TumugiChatView.dayLabel(new Date(Number(el.dataset.time)), now);
+    });
+    const headerDate = document.getElementById("headerDate");
+    if (headerDate) headerDate.textContent = TumugiChatView.formatHeaderDate(now);
+  }
+
+  const isUser = sender === "user";
+
+  const who = document.createElement("div");
+  who.className = "who";
+  who.append(isUser ? "あなた" : "つむぎ");
+  const time = document.createElement("time");
+  time.textContent = TumugiChatView.formatTime(now);
+  who.appendChild(time);
+
   const bubble = document.createElement("div");
   bubble.textContent = text;
   bubble.classList.add("bubble");
-  bubble.classList.add(sender === "user" ? "userBubble" : "aiBubble");
-  chatArea.appendChild(bubble);
+  bubble.classList.add(isUser ? "userBubble" : "aiBubble");
+  if (extraClass) bubble.classList.add(extraClass);
+
+  const row = document.createElement("div");
+  row.className = isUser ? "msg me" : "msg tumugi";
+  row.appendChild(who);
+  row.appendChild(bubble);
+
+  chatArea.appendChild(row);
   chatArea.scrollTop = chatArea.scrollHeight;
   return bubble;
+}
+
+// addMessage が返した吹き出しを、名前と時刻の行ごと消す
+function removeBubble(bubble) {
+  (bubble.closest(".msg") || bubble).remove();
 }
 
 // =========================
@@ -552,12 +595,10 @@ async function synthesizeVoiceSafe(text) {
 }
 
 function showVoicevoxWarning() {
+  // 1つだけ出す。ほかの発言と同じ形（名前と時刻つき）で足す
   const already = document.querySelector(".voicevox-warn");
   if (!already) {
-    const warn = document.createElement("div");
-    warn.className = "bubble aiBubble voicevox-warn";
-    warn.textContent = "⚠️ 声が出せないみたい…VOICEVOXが起動しているか確認してね";
-    document.getElementById("chatArea").appendChild(warn);
+    addMessage("⚠️ 声が出せないみたい…VOICEVOXが起動しているか確認してね", "ai", "voicevox-warn");
   }
 }
 
@@ -565,6 +606,7 @@ function showVoicevoxWarning() {
 // 再生している時刻で口パクの表を引き、口を開け閉めする（口を開けた画像がない表情では、見た目は変わらない）
 async function playVoice(voice) {
   isSpeaking = true;
+  updateStatus();
 
   try {
     const audio = new Audio(voice.url);
@@ -591,6 +633,7 @@ async function playVoice(voice) {
     isSpeaking = false;
     mouthOpen = false;
     updateFace();
+    updateStatus();
   }
 }
 
@@ -756,7 +799,7 @@ async function askOllama(userText) {
   };
 
   const removeLineBubble = () => {
-    if (lineBubble) lineBubble.remove();
+    if (lineBubble) removeBubble(lineBubble);
     lineBubble = null;
   };
 
@@ -986,9 +1029,9 @@ async function refreshConsentSettingUI() {
 
   const consented = await isEmotionLoggingConsented();
   statusEl.textContent = consented
-    ? "現在：感情ログの送信に同意しています。"
-    : "現在：感情ログの送信に同意していません（送信は無効化されています）。";
-  btn.textContent = consented ? "同意を取り消す" : "同意する";
+    ? "現在、感情記録を送信しています"
+    : "現在、感情記録を送信していません";
+  btn.textContent = consented ? "送信を停止" : "送信を開始";
 }
 
 async function toggleEmotionConsent() {
@@ -1047,8 +1090,44 @@ async function sendEmotionLog(emotion, isCrisis, harassmentType) {
 function setButtonBusy(busy) {
   const sendBtn   = document.getElementById("sendBtn");
   const textInput = document.getElementById("textInput");
+  isBusy = busy;
+  if (!busy) isReady = true; // 一度でも入力できるようになったら、準備は終わり
   if (sendBtn)   sendBtn.disabled   = busy;
   if (textInput) textInput.disabled = busy;
+  // 話題の例も、入力できないあいだは押せない
+  document.querySelectorAll("#starters button").forEach((btn) => { btn.disabled = busy; });
+  updateStatus();
+}
+
+// 左の欄の状態の表示（話を聞いています／考えています／話しています）。
+// isBusy か isSpeaking が変わるところで必ず呼ぶ（setButtonBusy・playVoice）
+function updateStatus() {
+  const el = document.getElementById("statusText");
+  if (!el) return;
+  // 起動してから最初に入力できるようになるまで（同意の窓などが出ているあいだも）は、「考えています」ではなく準備中と出す
+  el.textContent = (!isReady && !isSpeaking)
+    ? "準備しています"
+    : TumugiChatView.statusText({ busy: isBusy, speaking: isSpeaking });
+}
+
+// 話題の例のボタンを作る。押すと入力欄に書き出しが入るだけで、送信はしない
+function setupStarters() {
+  const box = document.getElementById("starters");
+  const input = document.getElementById("textInput");
+  if (!box || !input) return;
+  for (const starter of TumugiChatView.STARTERS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = starter.label;
+    btn.disabled = isBusy;
+    btn.addEventListener("click", () => {
+      if (isBusy || input.disabled) return;
+      input.value = starter.text;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+    box.appendChild(btn);
+  }
 }
 
 // =========================
@@ -1208,7 +1287,7 @@ function renderMemoryList() {
   const entries = Object.entries(memory);
 
   if (entries.length === 0) {
-    list.innerHTML = '<p class="memory-empty">まだ何も覚えていないよ…</p>';
+    list.innerHTML = '<p class="memory-empty">記憶している内容はありません</p>';
     return;
   }
 
@@ -1216,8 +1295,8 @@ function renderMemoryList() {
     <div class="memory-item" data-key="${escapeHtml(key)}">
       <span class="memory-key"></span>
       <input class="memory-value-input">
-      <button class="memory-save-btn" type="button">保存</button>
-      <button class="memory-delete-btn" type="button">削除</button>
+      <button class="btn quiet small memory-save-btn" type="button">保存</button>
+      <button class="btn danger small memory-delete-btn" type="button">削除</button>
     </div>
   `).join("");
 
@@ -1228,6 +1307,7 @@ function renderMemoryList() {
     item.querySelector(".memory-key").textContent = key;
     const input = item.querySelector(".memory-value-input");
     input.value = value;
+    input.setAttribute("aria-label", key);
     input.dataset.original = value;
   });
 }
@@ -1265,7 +1345,7 @@ function saveMemoryItem(key, btn) {
   saveMemory(memory);
   requestRebuildAfterMemoryChange();
   input.dataset.original = value;
-  btn.textContent = "✓";
+  btn.textContent = "保存しました";
   setTimeout(() => { btn.textContent = "保存"; }, 1200);
 }
 
@@ -1299,6 +1379,155 @@ function resetAllMemory() {
 }
 
 // =========================
+// 本人あての知らせ（my_notices.php・my_notices_seen.php）
+// 管理者が所属などを変えたとき、サーバーが本人あての知らせを残す。
+// ログインのあとに、未確認のものを会話の欄の上に出す。設定の窓には、直近90日分の履歴を出す。
+// 文は NoticeView が返す。画面には必ず textContent で入れる（部署名は管理者が自由に入れられるため）。
+// 読みこみに失敗しても、チャットの準備は止めない（呼ぶ側は await しない）。展示モードでは API を呼ばず、面も欄も出さない。
+// =========================
+let noticeUpToId = null;        // 面に並べた中で、いちばん大きい id（「確認」で送る）
+let noticeHistorySeq = 0;       // 履歴の読みこみの順番（古い返事で上書きしないため）
+
+// 自分の知らせを読む。読めなければ null（401 のときも、ここでは何もしない）
+async function fetchMyNotices() {
+  const token = await getStoredToken();
+  if (!token) return null;
+  const res = await window.electronAPI.netServer({ path: "/my_notices.php", method: "GET", token });
+  if (!res.ok || !Array.isArray(res.data?.notices)) return null;
+  return res.data.notices;
+}
+
+function showNoticePanel(show) {
+  const panel = document.getElementById("noticePanel");
+  if (panel) panel.hidden = !show;
+}
+
+function showNoticeConfirmError(message) {
+  const el = document.getElementById("noticeConfirmError");
+  if (el) el.textContent = message;
+}
+
+// 一覧（ul）を、知らせの文で並べ直す。順番は、渡された順のまま
+function renderNoticeItems(listEl, notices) {
+  if (!listEl) return;
+  const items = notices.map((notice) => {
+    const li = document.createElement("li");
+    li.textContent = NoticeView.noticeText(notice);
+    return li;
+  });
+  listEl.replaceChildren(...items);
+}
+
+async function loadNoticePanel() {
+  try {
+    const exhibit = await window.electronAPI.isExhibitMode().catch(() => true);
+    if (exhibit) {
+      showNoticePanel(false);
+      return;
+    }
+    const notices = await fetchMyNotices();
+    if (!notices) return;
+    const unseen = notices.filter((n) => !n.seen);
+    if (unseen.length === 0) {
+      showNoticePanel(false);
+      return;
+    }
+    noticeUpToId = Math.max(...unseen.map((n) => Number(n.id)));
+    renderNoticeItems(document.getElementById("noticeList"), unseen);
+    showNoticeConfirmError("");
+    showNoticePanel(true);
+  } catch (e) {
+    console.warn("[Notice] 知らせを読みこめませんでした:", e.message);
+  }
+}
+
+// 「確認」：並べた中でいちばん大きい id まで、確認したことをサーバーに記録する。
+// 返事が来るまでボタンを押せなくする。失敗したら、面は出したまま、理由を横に出す
+async function confirmNotices() {
+  if (noticeUpToId === null) return;
+  const btn = document.getElementById("noticeConfirmBtn");
+  if (btn) btn.disabled = true;
+  showNoticeConfirmError("");
+  try {
+    const token = await getStoredToken();
+    if (!token) {
+      await logout();
+      return;
+    }
+    const res = await window.electronAPI.netServer({
+      path: "/my_notices_seen.php",
+      method: "POST",
+      body: { up_to_id: noticeUpToId },
+      token,
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        await logout();
+        return;
+      }
+      showNoticeConfirmError("確認を記録できませんでした");
+      return;
+    }
+    noticeUpToId = null;
+    renderNoticeItems(document.getElementById("noticeList"), []);
+    showNoticePanel(false);
+  } catch (e) {
+    console.warn("[Notice] 確認を記録できませんでした:", e.message);
+    showNoticeConfirmError("確認を記録できませんでした");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 設定の窓の履歴。窓を開くたびに読み直す（見たもの・まだのもの、両方を新しい順に並べる）。面には触らない
+async function refreshNoticeHistory() {
+  const seq = ++noticeHistorySeq;
+  const listEl  = document.getElementById("noticeHistoryList");
+  const emptyEl = document.getElementById("noticeHistoryEmpty");
+  const showEmpty = (message) => {
+    if (!emptyEl) return;
+    emptyEl.textContent = message;
+    emptyEl.hidden = message === "";
+  };
+  renderNoticeItems(listEl, []);
+  showEmpty("");
+  try {
+    const notices = await fetchMyNotices();
+    if (seq !== noticeHistorySeq) return;
+    if (!notices) {
+      showEmpty("履歴を読みこめませんでした");
+      return;
+    }
+    renderNoticeItems(listEl, notices);
+    showEmpty(notices.length === 0 ? "変更の履歴はありません" : "");
+  } catch (e) {
+    if (seq !== noticeHistorySeq) return;
+    console.warn("[Notice] 履歴を読みこめませんでした:", e.message);
+    showEmpty("履歴を読みこめませんでした");
+  }
+}
+
+// ログアウトのとき、面と履歴の中身を空にして隠す（次にログインした人に、前の人の知らせが見えないように）
+function clearNotices() {
+  noticeUpToId = null;
+  noticeHistorySeq++;
+  renderNoticeItems(document.getElementById("noticeList"), []);
+  renderNoticeItems(document.getElementById("noticeHistoryList"), []);
+  const emptyEl = document.getElementById("noticeHistoryEmpty");
+  if (emptyEl) {
+    emptyEl.textContent = "";
+    emptyEl.hidden = true;
+  }
+  showNoticeConfirmError("");
+  showNoticePanel(false);
+}
+
+async function logoutAndClearNotices() {
+  clearNotices();
+  await logout();
+}
+
+// =========================
 // 設定モーダル（感情ログ同意の確認・撤回と、パスワードの変更）
 //
 // 以前はここでプロンプト・AIモデルの編集UIも扱っていたが、企業向け展開に伴い
@@ -1311,14 +1540,16 @@ async function openPromptModal() {
   refreshConsentSettingUI();
   // 展示モードでは、パスワードの変更欄を出さない（来場者が共用のアカウントのパスワードを変えられないように）
   const passwordBlock = document.getElementById("passwordSettingBlock");
-  if (passwordBlock) {
-    const exhibit = await window.electronAPI.isExhibitMode().catch(() => true);
-    passwordBlock.style.display = exhibit ? "none" : "";
-  }
+  const historyBlock  = document.getElementById("noticeHistoryBlock");
+  const exhibit = await window.electronAPI.isExhibitMode().catch(() => true);
+  if (passwordBlock) passwordBlock.style.display = exhibit ? "none" : "";
+  // 知らせの履歴の欄も、展示モードでは出さない（API も呼ばない）
+  if (historyBlock) historyBlock.style.display = exhibit ? "none" : "";
   clearPasswordInputs();
   showPasswordChangeResult("");
   const modal = document.getElementById("promptModal");
   if (modal) modal.style.display = "flex";
+  if (!exhibit) refreshNoticeHistory();
 }
 
 function closePromptModal() {
@@ -1401,7 +1632,7 @@ async function changePassword() {
     if (rekeyed) {
       showPasswordChangeResult("変更しました。ほかの PC でのログインは切れました", "ok");
     } else {
-      showPasswordChangeResult("パスワードは変更しました。記憶の付け替えに失敗したため、次のログインで記憶が消えることがあります", "ng");
+      showPasswordChangeResult("パスワードは変更しました。記憶の暗号化の鍵を更新できなかったため、次回のログイン時に記憶が削除されることがあります", "ng");
     }
   } finally {
     if (btn) btn.disabled = false;
@@ -1768,7 +1999,8 @@ const CLICK_HANDLERS = {
   adminNavBtn:      () => window.electronAPI.openAdmin(), // 別のウィンドウで開く（ページを移ると会話が消えるため）
   memoryBtn:        openMemoryModal,
   privacyBtn:       openPromptModal,
-  logoutBtn:        logout,
+  logoutBtn:        logoutAndClearNotices,
+  noticeConfirmBtn: confirmNotices,
   creditBtn:        openCreditModal,
   sendBtn:          sendTextInput,
   memoryCloseBtn:   closeMemoryModal,
@@ -1791,6 +2023,13 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(id)?.addEventListener("click", () => handler());
   }
   document.getElementById("textInput")?.addEventListener("keydown", onTextInputKeydown);
+  // 「詳細」は、設定の窓（送信の状態と説明がある）を開く。設定ボタンと同じ関数
+  document.getElementById("promiseDetailBtn")?.addEventListener("click", () => openPromptModal());
+
+  const headerDate = document.getElementById("headerDate");
+  if (headerDate) headerDate.textContent = TumugiChatView.formatHeaderDate(new Date());
+  setupStarters();
+  updateStatus();
 });
 
 // =========================
@@ -1812,6 +2051,9 @@ window.onload = async () => {
     await loadMemoryFromStore();
 
     await applyAdminNavVisibility();
+
+    // 知らせは、待たずに読みこむ（失敗しても、つむぎの準備・同意の画面の出方は変わらない）
+    loadNoticePanel();
 
     await checkConnections();
 

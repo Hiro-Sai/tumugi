@@ -90,9 +90,7 @@
     }
   },
   "dependencies": {
-    "@fontsource/dm-sans": "^5.3.0",
-    "@fontsource/noto-sans-jp": "^5.3.0",
-    "@fontsource/zen-old-mincho": "^5.3.0",
+    "@fontsource/biz-udpgothic": "^5.3.0",
     "electron-store": "^8.2.0"
   },
   "devDependencies": {

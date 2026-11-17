@@ -8,255 +8,275 @@
   <title>共感AIつむぎ</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-
-  <div class="bg-overlay"></div>
-  <div class="bg-vignette"></div>
-  <div class="bg-noise"></div>
-
-  <div class="particles" aria-hidden="true">
-    <span></span><span></span><span></span>
-    <span></span><span></span><span></span>
-  </div>
+<body class="page-chat">
 
   <div class="layout">
 
-    <!-- 左ペイン：アバター固定 -->
-    <aside class="sidebar">
-      <div class="sidebar-inner">
+    <!-- 左の欄：立ち絵と状態、メニュー -->
+    <aside class="side">
+      <h1>つむぎ</h1>
 
-        <div class="title-block">
-          <p class="title-sub">empathy AI</p>
-          <h1>つむぎ</h1>
-          <div class="title-divider"></div>
-        </div>
+      <div class="figure"><img id="avatar" src="images/normal_open.png" alt="つむぎ"></div>
+      <p id="statusText" class="status" role="status">話を聞いています</p>
 
-        <div class="avatar-wrap">
-          <div class="avatar-glow"></div>
-          <img id="avatar" src="images/normal_open.png" alt="つむぎ">
-        </div>
-
-        <!-- 管理者ダッシュボードへ（is_adminでない場合はJS側で非表示にする） -->
-        <button id="adminNavBtn" class="memory-btn">
-          <span>📊</span>
-          <span>管理者</span>
-        </button>
-
+      <nav class="nav" aria-label="メニュー">
         <!-- 記憶管理ボタン -->
-        <button id="memoryBtn" class="memory-btn">
-          <span>🧠</span>
-          <span>記憶</span>
+        <button id="memoryBtn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h10a2 2 0 0 1 2 2v15l-7-3.5-7 3.5v-15a2 2 0 0 1 2-2z"/></svg>
+          <span>つむぎの記憶</span><small>記憶した内容の確認・削除</small>
         </button>
 
-        <!-- 設定ボタン（感情ログ同意の確認・撤回と、パスワードの変更。プロンプト・モデル編集UIは
+        <!-- 設定ボタン（感情記録の送信の確認・変更と、パスワードの変更。プロンプト・モデル編集UIは
              企業向け展開に伴い一般社員向けUIから廃止済み。仕組み自体は
              script.js内に残しており、配布前に運用者が設定する想定） -->
-        <button id="privacyBtn" class="memory-btn">
-          <span>🔒</span>
-          <span>設定</span>
+        <button id="privacyBtn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+          <span>設定</span><small>感情記録の送信・パスワード</small>
         </button>
 
-        <!-- ログアウト -->
-        <button id="logoutBtn" class="memory-btn">
-          <span>🚪</span>
-          <span>ログアウト</span>
+        <!-- 管理者画面へ（is_adminでない場合はJS側で非表示にする） -->
+        <button id="adminNavBtn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M7 20v-7M12 20V5M17 20v-10"/></svg>
+          <span>管理者画面</span><small>部署別の集計・社員の管理</small>
         </button>
+      </nav>
 
-        <!-- クレジットボタン -->
-        <button id="creditBtn" class="memory-btn">
-          <span>©</span>
-          <span>クレジット</span>
-        </button>
-
+      <div class="side-foot">
+        <button id="logoutBtn" class="link" type="button">ログアウト</button>
+        <button id="creditBtn" class="link" type="button">クレジット</button>
       </div>
     </aside>
 
-    <!-- 右ペイン：チャット -->
-    <main class="chat-pane">
-      <div class="chat-header">
-        <span class="chat-header-dot"></span>
-        <span class="chat-header-dot"></span>
-        <span class="chat-header-dot"></span>
-        <span class="chat-header-title">conversation</span>
-      </div>
-      <div id="chatArea"></div>
+    <!-- 右：会話 -->
+    <main class="talk">
+      <header class="talk-head">
+        <h2>つむぎとの会話</h2>
+        <span id="headerDate" class="date"></span>
+        <div class="promise">
+          <svg class="lock" viewBox="0 0 20 20" fill="none" stroke-width="2" aria-hidden="true"><rect x="3.5" y="9" width="13" height="8.5" rx="2"/><path d="M6.5 9V6.5a3.5 3.5 0 0 1 7 0V9"/></svg>
+          <span>会話の内容は、<strong>このPC内にのみ</strong>保存されます</span>
+          <button id="promiseDetailBtn" class="link" type="button">詳細</button>
+        </div>
+      </header>
+
+      <!-- 本人あての知らせ（登録内容の変更）。未確認のものがあるときだけ、script.js が出す。展示モードでは出さない -->
+      <section id="noticePanel" class="notice-panel" aria-labelledby="noticePanelTitle" hidden>
+        <h3 id="noticePanelTitle">お知らせ</h3>
+        <p class="hint">登録内容が変更されました。心当たりがない場合は、管理者に確認してください。</p>
+        <ul id="noticeList"></ul>
+        <div class="notice-actions">
+          <button id="noticeConfirmBtn" class="btn small" type="button">確認</button>
+          <span id="noticeConfirmError" class="notice-error" role="status"></span>
+        </div>
+      </section>
+
+      <div id="chatArea" class="log"></div>
 
       <!-- テキスト入力（企業向け展開に伴い、音声入力は廃止しテキストのみに一本化） -->
-      <div class="text-input-bar">
-        <input
-          type="text"
-          id="textInput"
-          class="text-input"
-          placeholder="テキストで話しかける…"
-          autocomplete="off"
-        >
-        <button id="sendBtn" class="send-btn">
-          <span class="send-icon">↑</span>
-        </button>
+      <div class="compose">
+        <div id="starters" class="starters">
+          <span class="starters-label">話題の例：</span>
+          <!-- 話題の例のボタンは、JS が作る -->
+        </div>
+        <div class="compose-row">
+          <input
+            type="text"
+            id="textInput"
+            class="compose-input"
+            placeholder="メッセージを入力"
+            aria-label="つむぎへのメッセージ"
+            autocomplete="off"
+          >
+          <button id="sendBtn" class="btn" type="button">送信</button>
+        </div>
+        <p class="hint">Enter キーでも送信できます。</p>
       </div>
     </main>
 
   </div>
 
+  <!-- 重ねる窓。外側の要素（.over）は、script.js が style.display で出し入れする -->
+
   <!-- 記憶管理モーダル -->
-  <div id="memoryModal" class="memory-modal" style="display:none;">
-    <div class="memory-card">
-      <div class="memory-header">
-        <h3 class="memory-title">つむぎの記憶</h3>
-        <button id="memoryCloseBtn" class="memory-close">✕</button>
+  <div id="memoryModal" class="over" style="display:none;">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="memoryTitle">
+      <div class="dialog-head">
+        <h2 id="memoryTitle">つむぎの記憶</h2>
+        <button id="memoryCloseBtn" class="link" type="button">閉じる</button>
       </div>
+      <p class="hint">つむぎが会話から記憶した、あなたに関する情報です。このPC内に暗号化して保存し、会社には送信しません（展示モードでは保存せず、アプリを終了すると消えます）。内容の編集と削除ができます。</p>
       <div id="memoryList" class="memory-list">
         <!-- JS で生成 -->
       </div>
-      <div class="memory-footer">
-        <button id="memoryResetBtn" class="memory-reset-btn">全部忘れる</button>
-        <!-- 「全部忘れる」の確認。confirm() は使わない（Windows の Electron では、閉じたあと入力欄に文字が入らなくなるため） -->
+      <div class="row-actions">
+        <button id="memoryResetBtn" class="btn danger small" type="button">すべて削除</button>
+        <!-- 「すべて削除」の確認。confirm() は使わない（Windows の Electron では、閉じたあと入力欄に文字が入らなくなるため） -->
         <div id="memoryResetConfirm" class="memory-reset-confirm" style="display:none;">
-          <span class="memory-reset-question">記憶を全部消してもいい？</span>
-          <button id="memoryResetYesBtn" class="memory-reset-btn">消す</button>
-          <button id="memoryResetNoBtn" class="memory-reset-cancel-btn">やめる</button>
+          <span class="memory-reset-question">記憶をすべて削除します。よろしいですか？</span>
+          <button id="memoryResetYesBtn" class="btn danger small" type="button">削除する</button>
+          <button id="memoryResetNoBtn" class="btn quiet small" type="button">キャンセル</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- 設定モーダル（感情ログ同意の確認・撤回と、パスワードの変更） -->
-  <div id="promptModal" class="memory-modal" style="display:none;">
-    <div class="memory-card">
-      <div class="memory-header">
-        <h3 class="memory-title">設定</h3>
-        <button id="privacyCloseBtn" class="memory-close">✕</button>
+  <!-- 設定モーダル（感情記録の送信の確認・変更と、パスワードの変更） -->
+  <div id="promptModal" class="over" style="display:none;">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="dialog-head">
+        <h2 id="settingsTitle">設定</h2>
+        <button id="privacyCloseBtn" class="link" type="button">閉じる</button>
       </div>
 
-      <div class="settings-body">
-        <!-- 感情ログ送信の同意設定 -->
-        <div id="consentSettingBlock">
-          <label class="prompt-label">感情ログの送信について</label>
-          <p id="consentStatusText" class="model-check-result"></p>
-          <button class="model-check-btn" id="consentToggleBtn">切り替える</button>
+      <!-- 感情記録の送信 -->
+      <section id="consentSettingBlock">
+        <h3>感情記録の送信</h3>
+        <div class="state">
+          <div>
+            <b id="consentStatusText"></b>
+            <span class="hint">送信の対象は感情の分類などの記録のみで、会話の内容は送信されません。</span>
+          </div>
+          <button id="consentToggleBtn" class="btn quiet small" type="button">送信を停止</button>
         </div>
+      </section>
 
-        <!-- パスワードの変更（展示モードでは script.js が欄ごと隠す） -->
-        <div id="passwordSettingBlock" class="password-setting-block">
-          <label class="prompt-label">パスワードの変更</label>
-          <div class="setup-field">
-            <label class="setup-label" for="currentPasswordInput">今のパスワード</label>
-            <input type="password" id="currentPasswordInput" class="setup-input" autocomplete="current-password">
+      <!-- パスワードの変更（展示モードでは script.js が欄ごと隠す） -->
+      <section id="passwordSettingBlock">
+        <h3>パスワードの変更</h3>
+        <div class="stack">
+          <div class="field">
+            <label for="currentPasswordInput">現在のパスワード</label>
+            <input type="password" id="currentPasswordInput" autocomplete="current-password">
           </div>
-          <div class="setup-field">
-            <label class="setup-label" for="newPasswordInput">新しいパスワード（8文字以上）</label>
-            <input type="password" id="newPasswordInput" class="setup-input" autocomplete="new-password">
+          <div class="field">
+            <label for="newPasswordInput">新しいパスワード</label>
+            <input type="password" id="newPasswordInput" autocomplete="new-password" aria-describedby="newPasswordHint">
+            <span id="newPasswordHint" class="hint">8文字以上</span>
           </div>
-          <div class="setup-field">
-            <label class="setup-label" for="confirmPasswordInput">新しいパスワード（もう一度）</label>
-            <input type="password" id="confirmPasswordInput" class="setup-input" autocomplete="new-password">
+          <div class="field">
+            <label for="confirmPasswordInput">新しいパスワード（確認）</label>
+            <input type="password" id="confirmPasswordInput" autocomplete="new-password">
           </div>
-          <p class="prompt-hint">今のパスワードを5回間違えると、ログインも含めて15分ほど使えなくなります</p>
-          <button class="model-check-btn password-change-btn" id="passwordChangeBtn">変更する</button>
+          <p class="hint">現在のパスワードを5回間違えると、約15分間、ログインを含めて利用できなくなります。</p>
+          <div><button id="passwordChangeBtn" class="btn" type="button">パスワードを変更</button></div>
           <p id="passwordChangeResult" class="model-check-result" role="status"></p>
         </div>
+      </section>
+
+      <!-- 登録内容の変更の履歴（展示モードでは script.js が欄ごと隠す） -->
+      <div id="noticeHistoryBlock">
+        <h3>登録内容の変更の履歴</h3>
+        <p class="hint">直近90日分を表示します。</p>
+        <ul id="noticeHistoryList"></ul>
+        <p id="noticeHistoryEmpty" class="hint" hidden></p>
       </div>
     </div>
   </div>
 
   <!-- クレジットモーダル -->
-  <div id="creditModal" class="memory-modal" style="display:none;">
-    <div class="memory-card credit-card">
-      <div class="memory-header">
-        <h3 class="memory-title">クレジット</h3>
-        <button id="creditCloseBtn" class="memory-close">✕</button>
+  <div id="creditModal" class="over" style="display:none;">
+    <div class="dialog credit-dialog" role="dialog" aria-modal="true" aria-labelledby="creditTitle">
+      <div class="dialog-head">
+        <h2 id="creditTitle">クレジット</h2>
+        <button id="creditCloseBtn" class="link" type="button">閉じる</button>
       </div>
 
-      <div class="credit-body">
-
-        <!-- 声と立ち絵の作者は、必ず載せる決まりのクレジットなので、絵と一緒にいちばん上に出す -->
-        <div class="credit-hero">
-          <img class="credit-hero-img" src="images/normal_open.png" alt="つむぎの立ち絵">
-          <div>
-            <p class="credit-app-name">共感AI つむぎ</p>
-            <p class="credit-hero-line"><span class="credit-hero-label">声</span>VOICEVOX:春日部つむぎ</p>
-            <p class="credit-hero-line"><span class="credit-hero-label">立ち絵</span>坂本アヒル<span class="credit-hero-sub">春日部つむぎ立ち絵素材</span></p>
-            <p class="credit-app-meta">Version 1.0.0　© 2026 Hiro-Sai</p>
-          </div>
+      <!-- 声と立ち絵の作者は、必ず載せる決まりのクレジットなので、絵と一緒にいちばん上に出す -->
+      <div class="credit-hero">
+        <img class="credit-hero-img" src="images/normal_open.png" alt="つむぎの立ち絵">
+        <div>
+          <p class="credit-app-name">共感AI つむぎ</p>
+          <p class="credit-hero-line"><span class="credit-hero-label">声</span>VOICEVOX:春日部つむぎ</p>
+          <p class="credit-hero-line"><span class="credit-hero-label">立ち絵</span>坂本アヒル<span class="credit-hero-sub">春日部つむぎ立ち絵素材</span></p>
+          <p class="credit-app-meta">Version 1.0.0　© 2026 Hiro-Sai</p>
         </div>
-
-        <p class="credit-disclaimer">春日部つむぎ公式とは関係のない、個人の作品です。</p>
-
-        <div class="credit-section-title">使っているソフト</div>
-        <dl class="credit-list">
-          <dt class="credit-name">VOICEVOX</dt>       <dd class="credit-detail">© Hiroshiba Kazuyuki</dd>
-          <dt class="credit-name">Gemma 4（E4B）</dt> <dd class="credit-detail">© Google DeepMind・Apache License 2.0</dd>
-          <dt class="credit-name">Ollama</dt>         <dd class="credit-detail">© Ollama, Inc.・MIT License</dd>
-          <dt class="credit-name">Electron</dt>       <dd class="credit-detail">© OpenJS Foundation・MIT License</dd>
-          <dt class="credit-name">electron-store</dt> <dd class="credit-detail">© Sindre Sorhus・MIT License</dd>
-        </dl>
-
-        <div class="credit-section-title">フォント（SIL Open Font License 1.1）</div>
-        <dl class="credit-list">
-          <dt class="credit-name">Zen Old Mincho</dt> <dd class="credit-detail">© 2021 The Zen Old Mincho Project Authors</dd>
-          <dt class="credit-name">DM Sans</dt>        <dd class="credit-detail">© 2014 The DM Sans Project Authors</dd>
-          <dt class="credit-name">Noto Sans JP</dt>   <dd class="credit-detail">© 2014-2021 Adobe</dd>
-        </dl>
-
-        <div class="credit-license-note">
-          ライセンスの全文は、それぞれの公式サイトにあります。
-        </div>
-
       </div>
+
+      <p class="credit-disclaimer">春日部つむぎ公式とは関係のない、個人の作品です。</p>
+
+      <h3>使っているソフト</h3>
+      <dl class="credit-list">
+        <dt class="credit-name">VOICEVOX</dt>       <dd class="credit-detail">© Hiroshiba Kazuyuki</dd>
+        <dt class="credit-name">Gemma 4（E4B）</dt> <dd class="credit-detail">© Google DeepMind・Apache License 2.0</dd>
+        <dt class="credit-name">Ollama</dt>         <dd class="credit-detail">© Ollama, Inc.・MIT License</dd>
+        <dt class="credit-name">Electron</dt>       <dd class="credit-detail">© OpenJS Foundation・MIT License</dd>
+        <dt class="credit-name">electron-store</dt> <dd class="credit-detail">© Sindre Sorhus・MIT License</dd>
+      </dl>
+
+      <h3>フォント（SIL Open Font License 1.1）</h3>
+      <dl class="credit-list">
+        <dt class="credit-name">BIZ UDPゴシック</dt> <dd class="credit-detail">© 2022 The BIZ UDGothic Project Authors</dd>
+      </dl>
+
+      <p class="hint credit-license-note">ライセンスの全文は、それぞれの公式サイトにあります。</p>
     </div>
   </div>
 
   <!-- 注意事項モーダル（社員ごとに、まだ同意の意思決定をしていない場合のみ表示） -->
-  <div id="noticeModal" class="setup-modal" style="display:none;">
-    <div class="setup-card">
-      <p class="setup-sub">始める前に</p>
-      <h2 class="setup-title">ご注意</h2>
-      <div class="setup-desc" style="text-align:left; line-height:1.85; margin-bottom:14px;">
-        <p>🖥️ <strong>Ollama</strong>を起動してからご利用ください（VOICEVOXはアプリが自動で起動します）。</p>
-        <p>🔒 会話の<strong>発言内容そのもの</strong>は、このPCの中だけに保存されます。発言内容が外部やサーバーに送信されることはありません。</p>
-        <p>📊 <strong>ただし</strong>、会話ごとの感情カテゴリ（happy/sad等）、危機的な発言を検知したかどうかのフラグ、職場でのハラスメントに関する発言（受けた／言ってしまった）を検知したかどうかは、社内サーバーに送信され、あなたの社員IDに紐づいた形で記録されます。管理者は個人ごとの詳細は見られず、10名以上のグループ単位で集計された値のみを閲覧できます。</p>
+  <div id="noticeModal" class="over" style="display:none;">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="noticeTitle">
+      <h2 id="noticeTitle">ご利用の前に：感情記録の送信について</h2>
+      <p>会話の内容そのものは、このPCの外には送信されません。そのうえで、感情記録（危機的な発言・ハラスメントに関する発言の検知結果を含む）を社内サーバーに送信するかどうかを選択してください。</p>
+      <div class="two">
+        <div>
+          <h3>選択にかかわらず、送信されないもの</h3>
+          <ul>
+            <li>あなたの発言内容</li>
+            <li>つむぎの返答</li>
+          </ul>
+        </div>
+        <div>
+          <h3>「送信する」を選択した場合に、送信されるもの</h3>
+          <ul>
+            <li>会話ごとの感情の分類（喜び・普通・疲れ・不安・怒り・悲しみ）</li>
+            <li>危機的な発言を検知したかどうか</li>
+            <li>ハラスメントに関する発言（受けた／言ってしまった）を検知したかどうか</li>
+          </ul>
+        </div>
       </div>
-      <div class="setup-divider"></div>
-      <div class="setup-desc" style="text-align:left; line-height:1.75; margin-bottom:14px;">
-        <p>上記の感情ログ（危機検知・ハラスメント検知を含む）の送信に同意しますか？<br>同意しない場合でもチャット機能は通常通り利用できます。ただし危機的な発言を検知した際にその場でホットライン等の案内をお伝えする対応は、この同意の有無に関わらず必ず行われます（案内表示はローカルの挙動で、サーバーへの送信とは別のものです）。この設定は後から「設定」画面でいつでも変更できます。</p>
+      <p>「送信する」を選んだ場合、記録は、あなたの社員IDと紐づけて社内サーバーに保存されます。管理者が閲覧できるのは、10名以上のグループ単位の集計値のみで、個人ごとの記録は閲覧できません。管理者が所属（部署など）を変更したときは、次のログイン時にお知らせします。変更の履歴は「設定」で確認できます。</p>
+      <p class="hint">どちらを選択しても、チャット機能は通常どおり利用できます。危機的な発言を検知した場合は、選択にかかわらず、その場で相談窓口を案内します（この案内はこのPC内の動作で、サーバーへの送信とは別のものです）。この設定は、後から「設定」画面でいつでも変更できます。</p>
+      <div class="choice">
+        <button id="noticeDeclineBtn" class="btn quiet" type="button">送信しない</button>
+        <button id="noticeAgreeBtn" class="btn quiet" type="button">送信する</button>
       </div>
-      <button id="noticeAgreeBtn" class="setup-btn">同意する</button>
-      <button id="noticeDeclineBtn" class="setup-btn" style="background:none; border:1px solid rgba(43,32,24,0.18); color:var(--cream-dim); box-shadow:none; margin-top:6px;">同意しない（ログ送信を無効化）</button>
+      <p class="hint dialog-foot">Ollama を起動してからご利用ください（VOICEVOX はアプリが自動で起動します）。</p>
     </div>
   </div>
 
   <!-- 初回セットアップモーダル -->
-  <div id="setupModal" class="setup-modal" style="display:none;">
-    <div class="setup-card">
-      <p class="setup-sub">はじめまして</p>
-      <h2 class="setup-title">つむぎです</h2>
-      <p class="setup-desc">少しだけ教えてくれると、もっと仲良くなれるかも〜</p>
-      <div class="setup-fields">
-        <div class="setup-field">
-          <label class="setup-label">名前</label>
-          <input type="text" id="setupName" class="setup-input" placeholder="たろう">
+  <div id="setupModal" class="over" style="display:none;">
+    <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+      <h2 id="setupTitle">はじめに</h2>
+      <p>入力した内容は、つむぎとの会話に使われます。このPC内にのみ保存され、会社には送信されません。入力は任意です。</p>
+      <div class="stack setup-fields">
+        <div class="field">
+          <label for="setupName">呼び名</label>
+          <input type="text" id="setupName" placeholder="たろう" autocomplete="off">
         </div>
-        <div class="setup-field">
-          <label class="setup-label">年齢</label>
-          <input type="text" id="setupAge" class="setup-input" placeholder="22">
+        <div class="field">
+          <label for="setupAge">年齢</label>
+          <input type="text" id="setupAge" placeholder="22" autocomplete="off">
         </div>
-        <div class="setup-field">
-          <label class="setup-label">趣味・好きなこと</label>
-          <input type="text" id="setupHobby" class="setup-input" placeholder="音楽、映画…">
+        <div class="field">
+          <label for="setupHobby">趣味</label>
+          <input type="text" id="setupHobby" placeholder="音楽、映画…" autocomplete="off">
         </div>
-        <div class="setup-field">
-          <label class="setup-label">最近の気分</label>
-          <input type="text" id="setupMood" class="setup-input" placeholder="ちょっと疲れ気味…">
+        <div class="field">
+          <label for="setupMood">最近の気分</label>
+          <input type="text" id="setupMood" placeholder="ちょっと疲れ気味…" autocomplete="off">
         </div>
       </div>
-      <button id="setupSubmitBtn" class="setup-btn">話しかける</button>
-      <button id="setupSkipBtn" class="setup-skip">後で</button>
+      <div class="choice">
+        <button id="setupSkipBtn" class="btn quiet" type="button">スキップ</button>
+        <button id="setupSubmitBtn" class="btn" type="button">会話を始める</button>
+      </div>
     </div>
   </div>
 
-  <!-- utils.js → auth.js → safety.js → prompt.js → ollama.js → conversation.js → password.js → lipsync.js → script.js の順で読み込む
-       （conversation.js は読み込み時に TumugiPrompt を使うので、prompt.js より後に置く） -->
- <script src="js/utils.js"></script>
+  <!-- utils.js → auth.js → safety.js → prompt.js → ollama.js → conversation.js → password.js → lipsync.js → chat-view.js → script.js の順で読み込む
+       （conversation.js は読み込み時に TumugiPrompt を使うので、prompt.js より後に置く。script.js は最後） -->
+  <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/safety.js"></script>
   <script src="js/prompt.js"></script>
@@ -264,6 +284,8 @@
   <script src="js/conversation.js"></script>
   <script src="js/password.js"></script>
   <script src="js/lipsync.js"></script>
+  <script src="js/chat-view.js"></script>
+  <script src="js/notice-view.js"></script>
   <script src="js/script.js"></script>
 </body>
 </html>
