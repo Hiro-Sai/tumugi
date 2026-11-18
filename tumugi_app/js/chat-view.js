@@ -41,9 +41,11 @@
     return prevKey === null || prevKey === undefined || prevKey !== dayKey(date);
   }
 
-  // 左の欄の状態の文。話している間は、考えている状態より優先する
-  function statusText({ busy, speaking }) {
+  // 左の欄の状態の文。話している間は、ほかの状態より優先する。
+  // expired は、ログインの期限が切れて、入力を止めているか（「話を聞いています」のままだと、入力できるように見えるため）
+  function statusText({ busy, speaking, expired = false }) {
     if (speaking) return "話しています";
+    if (expired) return "ログインを待っています";
     if (busy) return "考えています";
     return "話を聞いています";
   }

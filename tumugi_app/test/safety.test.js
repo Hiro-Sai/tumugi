@@ -10,7 +10,7 @@ const path   = require("path");
 
 const {
   CRISIS_KEYWORDS, USER_EMOTIONS, REPLY_SCHEMA, CLASSIFY_SCHEMA, CLASSIFY_INSTRUCTION,
-  hasCrisisKeyword, parseClassification, parseReply, extractStreamingLine,
+  hasCrisisKeyword, parseClassification, keywordTurnRecord, parseReply, extractStreamingLine,
 } = require("../js/safety");
 
 // -----------------------------------------
@@ -75,6 +75,20 @@ test("hasCrisisKeyword: 冗談や日常の言い回しには反応しない", ()
   ];
   for (const text of cases) {
     assert.equal(hasCrisisKeyword(text), false, text);
+  }
+});
+
+// 部分一致なので、危機ではない文でも当たる（レビューの A1）。
+// 当たったら相談先はすぐ案内するが、記録は判定で確かめてから送る（keywordTurnRecord）
+test("hasCrisisKeyword: 危機ではない文でも当たることがある（記録は判定で確かめる）", () => {
+  const cases = [
+    "不安が消えたいい一日だった",   // 「消えた」＋「い」
+    "鍵をさがしにたいへん苦労した", // 「…しに」＋「たい」
+    "自殺防止の研修を受けた",
+    "練炭で焼き肉をした",
+  ];
+  for (const text of cases) {
+    assert.equal(hasCrisisKeyword(text), true, text);
   }
 });
 
@@ -224,46 +238,123 @@ test("CLASSIFY_INSTRUCTION: 判定用の履歴と同じ『つむぎ：』を使�
 // -----------------------------------------
 // parseClassification
 // -----------------------------------------
+// readable は、答えから crisis の値（true か false）が読めたか
 test("parseClassification: 正しい JSON から危機とハラスメントを読み取る", () => {
   assert.deepEqual(
     parseClassification('{"reason":"薬を集めている","crisis":true,"harassment":"none"}'),
-    { crisis: true, harassment: "none" }
+    { crisis: true, harassment: "none", readable: true }
   );
   assert.deepEqual(
     parseClassification('{"reason":"上司に怒鳴られている","crisis":false,"harassment":"received"}'),
-    { crisis: false, harassment: "received" }
+    { crisis: false, harassment: "received", readable: true }
   );
 });
 
 test("parseClassification: JSON の前後に余計な文字があっても読み取る", () => {
   assert.deepEqual(
     parseClassification('```json\n{"reason":"","crisis":false,"harassment":"said"}\n```'),
-    { crisis: false, harassment: "said" }
+    { crisis: false, harassment: "said", readable: true }
   );
 });
 
-test("parseClassification: 決まった値でないものは、危機なし・ハラスメントなしとして扱う", () => {
+test("parseClassification: 決まった値でないものは、危機なし・ハラスメントなしとして扱う（crisis は読めない扱い）", () => {
   assert.deepEqual(
     parseClassification('{"reason":"","crisis":"true","harassment":"power"}'),
-    { crisis: false, harassment: "none" }
+    { crisis: false, harassment: "none", readable: false }
   );
 });
 
 test("parseClassification: JSON が途中で切れていても、crisis が true なら拾う", () => {
   assert.deepEqual(
     parseClassification('{"reason":"別れのあいさつのように見える","crisis": true,"harass'),
-    { crisis: true, harassment: "none" }
+    { crisis: true, harassment: "none", readable: true }
   );
   assert.deepEqual(
     parseClassification('{"reason":"…","crisis":false,"harassment":"received"'),
-    { crisis: false, harassment: "received" }
+    { crisis: false, harassment: "received", readable: true }
+  );
+});
+
+test("parseClassification: crisis が見えなければ、読めない扱い", () => {
+  // JSON としては読めるが、crisis がない
+  assert.deepEqual(
+    parseClassification('{"reason":"…","harassment":"received"}'),
+    { crisis: false, harassment: "received", readable: false }
+  );
+  // crisis の手前で切れている
+  assert.deepEqual(
+    parseClassification('{"reason":"途中で'),
+    { crisis: false, harassment: "none", readable: false }
   );
 });
 
 test("parseClassification: 読み取れないものや文字列以外は、危機なし・ハラスメントなし", () => {
   for (const value of ["", "わかりません", undefined, null, 123]) {
-    assert.deepEqual(parseClassification(value), { crisis: false, harassment: "none" }, String(value));
+    assert.deepEqual(parseClassification(value), { crisis: false, harassment: "none", readable: false }, String(value));
   }
+});
+
+// -----------------------------------------
+// keywordTurnRecord（キーワードに当たった回の記録を、判定の答えで決める。レビューの A1）
+// -----------------------------------------
+test("keywordTurnRecord: 判定に失敗した・答えが読めない・答えがないときは、危機として送る（ハラスメントはなし）", () => {
+  const cases = [
+    { ok: false, crisis: false, harassment: "none" },                     // 呼び出しに失敗（classifySafety の失敗の形）
+    { ok: true, readable: false, crisis: false, harassment: "none" },     // 答えが読めない
+    { ok: true, readable: false, crisis: false, harassment: "received" }, // 読めない答えのハラスメントは当てにしない
+    null,
+    undefined,
+  ];
+  for (const judgment of cases) {
+    assert.deepEqual(keywordTurnRecord(judgment), { send: true, harassment: "none" }, JSON.stringify(judgment));
+  }
+});
+
+test("keywordTurnRecord: 判定が危機なら、危機として送る（ハラスメントは判定の答え）", () => {
+  assert.deepEqual(
+    keywordTurnRecord({ ok: true, readable: true, crisis: true, harassment: "none" }),
+    { send: true, harassment: "none" }
+  );
+  assert.deepEqual(
+    keywordTurnRecord({ ok: true, readable: true, crisis: true, harassment: "received" }),
+    { send: true, harassment: "received" }
+  );
+});
+
+test("keywordTurnRecord: 危機ではなくても、ハラスメントがあれば危機として送る", () => {
+  for (const harassment of ["received", "said"]) {
+    assert.deepEqual(
+      keywordTurnRecord({ ok: true, readable: true, crisis: false, harassment }),
+      { send: true, harassment }
+    );
+  }
+});
+
+test("keywordTurnRecord: 危機でもハラスメントでもなければ、送らない", () => {
+  assert.deepEqual(
+    keywordTurnRecord({ ok: true, readable: true, crisis: false, harassment: "none" }),
+    { send: false }
+  );
+});
+
+test("keywordTurnRecord: ハラスメントが決まった値でなければ、なしとして扱う", () => {
+  assert.deepEqual(
+    keywordTurnRecord({ ok: true, readable: true, crisis: false, harassment: "power" }),
+    { send: false }
+  );
+  assert.deepEqual(
+    keywordTurnRecord({ ok: true, readable: true, crisis: true, harassment: "power" }),
+    { send: true, harassment: "none" }
+  );
+});
+
+test("keywordTurnRecord: parseClassification の答えを、classifySafety と同じ形で渡せる", () => {
+  // classifySafety は、呼び出しに成功すると { ok: true, ...parseClassification(答え) } を返す
+  const record = (raw) => keywordTurnRecord({ ok: true, ...parseClassification(raw) });
+  assert.deepEqual(record('{"reason":"研修の話","crisis":false,"harassment":"none"}'), { send: false });
+  assert.deepEqual(record('{"reason":"死を望んでいる","crisis":true,"harassment":"none"}'), { send: true, harassment: "none" });
+  assert.deepEqual(record('{"reason":"言われた","crisis":false,"harassment":"received"}'), { send: true, harassment: "received" });
+  assert.deepEqual(record("わかりません"), { send: true, harassment: "none" });
 });
 
 // -----------------------------------------

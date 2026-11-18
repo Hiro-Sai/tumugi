@@ -33,6 +33,10 @@ let lastReplyPromptTokens = 0;
 // 履歴の作り直しは、この回の分を履歴に足し終えてから行うので、途中は待たせる（requestRebuild）
 let turnInProgress = false;
 
+// ログインの期限が切れたか（サーバーに 401 で断られたときも）。立ったら入力を止め、回が終わってから知らせを出す。
+// ログイン画面へは、本人が知らせのボタンを押したときだけ移る（markSessionExpired・showSessionExpiredNotice）
+let sessionExpired = false;
+
 // 待たせている履歴の作り直しの頼み（{ summary, dropItems }）。なければ null。
 // 要約と記憶の変更が重なったら、1回にまとめる（mergeRebuild）
 let pendingRebuild = null;
@@ -719,7 +723,10 @@ async function showCrisisSupportMessages(userText) {
 // - 判定の理由（reason）は、発言の中身を含むので保存も表示もしない
 // 呼び出しに失敗したときは、危機なし・ハラスメントなしとして返事に進む
 // （キーワードの安全網は別にある。Ollama につながらないときは、返事の呼び出しでエラーを表示する）。
-// ok は呼び出しが成功したか。失敗した回は、危機・ハラスメントが分からないので感情ログを送らない。
+// ok は呼び出しが成功したか。返事に進む回で失敗したときは、危機・ハラスメントが分からないので感情ログを送らない。
+// readable は、答えから crisis が読めたか（js/safety.js の parseClassification）。
+// キーワードに当たった回も、感情ログに送るかを決めるために呼ぶ（js/safety.js の keywordTurnRecord。
+// 失敗した回と読めない回は、危機として送る）。
 // =========================
 async function classifySafety(userText) {
   const none = { ok: false, crisis: false, harassment: "none" };
@@ -1046,11 +1053,14 @@ async function toggleEmotionConsent() {
 // 一切送信しない（安全配慮を理由にした同意なし送信の例外は設けない）。
 // 危機検知時のホットライン案内表示自体はローカルの挙動であり、
 // この送信可否とは完全に独立して常に行われる。
+// ログインの期限が切れている（トークンがない）ときと、サーバーが 401 を返したときは、送らずに
+// markSessionExpired を呼ぶ。ここではログアウトしない（返事や危機の案内の途中で、画面を切り替えないため。レビューの A11）。
+// 期限は、同意より先に見る（同意していない社員でも、期限が切れたら知らせる）。
 // =========================
 async function sendEmotionLog(emotion, isCrisis, harassmentType) {
   const token = await getStoredToken();
   if (!token) {
-    await logout();
+    markSessionExpired();
     return;
   }
 
@@ -1073,7 +1083,7 @@ async function sendEmotionLog(emotion, isCrisis, harassmentType) {
 
   if (!res.ok) {
     if (res.status === 401) {
-      await logout();
+      markSessionExpired();
       return;
     }
     console.warn("[EmotionLog] 送信失敗:", res.reason, res.status);
@@ -1084,6 +1094,48 @@ async function sendEmotionLog(emotion, isCrisis, harassmentType) {
   console.log("[EmotionLog] 記録完了:", res.data);
 }
 
+// キーワードに当たった回の感情ログ（レビューの A1）。判定の答え（judging は classifySafety の Promise）を待って、
+// 送るかを決める（js/safety.js の keywordTurnRecord）。呼ぶ側は待たない（入力を戻すのを遅らせないため）
+function recordKeywordTurn(judging) {
+  judging
+    .then((safety) => {
+      const record = TumugiSafety.keywordTurnRecord(safety);
+      if (!record.send) {
+        // 発言の中身と判定の理由は出さない
+        console.log("[EmotionLog] キーワードに当たったが、判定が危機でもハラスメントでもないため送らない");
+        return;
+      }
+      return sendEmotionLog("sad", true, record.harassment);
+    })
+    .catch(() => {});
+}
+
+// =========================
+// ログインの期限切れ（レビューの A11）
+// 期限が切れても、すぐにはログイン画面へ移らない。回の途中なら、返事や危機の案内を最後まで出し、
+// 回が終わってから知らせを出す（handleUserInput の finally）。知らせを出すと、入力を止める。
+// ログイン画面へは、本人が知らせの「ログイン画面へ」を押したときだけ移る（危機の案内が、勝手に消えないように）。
+// お知らせの「確認」とパスワードの変更は、本人が押す操作なので、今までどおり、すぐログイン画面へ移る。
+// =========================
+function markSessionExpired() {
+  if (sessionExpired) return;
+  sessionExpired = true;
+  console.warn("[Auth] ログインの期限が切れた（または、サーバーに断られた）。知らせを出して入力を止める");
+  if (!turnInProgress) showSessionExpiredNotice();
+}
+
+// 入力の所の話題の例・入力欄・送信を隠して、知らせを出す。2回目からは何もしない
+function showSessionExpiredNotice() {
+  const notice = document.getElementById("sessionExpired");
+  const compose = notice?.closest(".compose");
+  if (!notice || !compose || !notice.hidden) return;
+  compose.classList.add("expired");
+  notice.hidden = false;
+  setButtonBusy(false); // sessionExpired のあいだは、入力は戻らない。状態の表示も直す
+  // 入力欄が消えて、フォーカスの行き先がなくなるので、ボタンに移す
+  document.getElementById("sessionExpiredBtn")?.focus();
+}
+
 // =========================
 // ボタン状態制御
 // =========================
@@ -1092,22 +1144,25 @@ function setButtonBusy(busy) {
   const textInput = document.getElementById("textInput");
   isBusy = busy;
   if (!busy) isReady = true; // 一度でも入力できるようになったら、準備は終わり
-  if (sendBtn)   sendBtn.disabled   = busy;
-  if (textInput) textInput.disabled = busy;
+  // ログインの期限が切れたあとは、入力を戻さない
+  const locked = busy || sessionExpired;
+  if (sendBtn)   sendBtn.disabled   = locked;
+  if (textInput) textInput.disabled = locked;
   // 話題の例も、入力できないあいだは押せない
-  document.querySelectorAll("#starters button").forEach((btn) => { btn.disabled = busy; });
+  document.querySelectorAll("#starters button").forEach((btn) => { btn.disabled = locked; });
   updateStatus();
 }
 
 // 左の欄の状態の表示（話を聞いています／考えています／話しています）。
-// isBusy か isSpeaking が変わるところで必ず呼ぶ（setButtonBusy・playVoice）
+// isBusy か isSpeaking が変わるところで必ず呼ぶ（setButtonBusy・playVoice）。
+// ログインの期限切れは、知らせを出すときに表示する（showSessionExpiredNotice が setButtonBusy を呼ぶ）
 function updateStatus() {
   const el = document.getElementById("statusText");
   if (!el) return;
   // 起動してから最初に入力できるようになるまで（同意の窓などが出ているあいだも）は、「考えています」ではなく準備中と出す
   el.textContent = (!isReady && !isSpeaking)
     ? "準備しています"
-    : TumugiChatView.statusText({ busy: isBusy, speaking: isSpeaking });
+    : TumugiChatView.statusText({ busy: isBusy, speaking: isSpeaking, expired: sessionExpired });
 }
 
 // 話題の例のボタンを作る。押すと入力欄に書き出しが入るだけで、送信はしない
@@ -1137,7 +1192,7 @@ async function sendTextInput() {
   const input = document.getElementById("textInput");
   if (!input) return;
   const text = input.value.trim();
-  if (!text || isSpeaking) return;
+  if (!text || isSpeaking || sessionExpired) return;
   input.value = "";
   await handleUserInput(text);
 }
@@ -1157,12 +1212,15 @@ function onTextInputKeydown(event) {
 // 2. 判定専用の呼び出し（キーワードで拾えない遠回しな表現。classifySafety）
 // ハラスメント検知は 2 のみ（受害/加害を区別）。
 // 危機と判定したら返事は作らず、相談先を案内する。
+// キーワードに当たった回は、判定を待たずに案内する。感情ログに送るかだけを、裏で判定に確かめてから決める
+// （誤検知や冗談を、危機として記録しないため。レビューの A1。recordKeywordTurn）。
 // 感情ログに送るのはユーザーの気持ち（返事の userEmotion）。つむぎの表情（emotion）は立ち絵だけに使う。
 // 危機のときは、感情に関係なくサーバー側でスコアが100になる（感情は sad として送る）。
 // 回の始まりに turnInProgress を立て、どの終わり方でも（危機の案内で終わる回も、例外で終わる回も）、
 // 最後に戻して、待たせていた履歴の作り直しを行う（requestRebuild・applyPendingRebuild）。
 // 想定外の例外で終わっても入力が止まったままにならないよう、finally でも入力を戻す。
 // 声を読んでいるあいだも回の途中なので、そのあいだに届いた要約は、読み終えてから反映する。
+// 回の途中でログインの期限切れに気づいたときは、回の終わりに知らせを出す（markSessionExpired。レビューの A11）。
 // =========================
 async function handleUserInput(userText) {
   turnInProgress = true;
@@ -1176,10 +1234,15 @@ async function handleUserInput(userText) {
       currentEmotion = "troubled";
       updateFace();
 
+      // 感情ログに送るかを決める判定。待たずに、案内を会話の履歴に足す前に始める
+      // （判定に送る会話は呼んだ時点で組み立てるので、今回の発言と案内は判定に入らない。入れると同じ発言が2回入る）
+      const judging = classifySafety(userText);
+
       await showCrisisSupportMessages(userText);
 
-      // キーワード一致の場合はOllamaを呼んでいないためharassment判定は行えない（"none"扱い）
-      sendEmotionLog("sad", true, "none").catch(() => {});
+      // 送るのは、今までどおり案内を出し終えてから（案内の途中に「ログ送信失敗」が割りこまないように）。
+      // 判定の答えを待つが、入力を戻すのは待たせない
+      recordKeywordTurn(judging);
 
       setButtonBusy(false);
       return;
@@ -1242,6 +1305,8 @@ async function handleUserInput(userText) {
     setButtonBusy(false);
     turnInProgress = false;
     applyPendingRebuild();
+    // 回の途中でログインの期限切れに気づいていたら、返事や案内を出し終えた今、知らせを出す
+    if (sessionExpired) showSessionExpiredNotice();
   }
 }
 
@@ -2000,6 +2065,7 @@ const CLICK_HANDLERS = {
   memoryBtn:        openMemoryModal,
   privacyBtn:       openPromptModal,
   logoutBtn:        logoutAndClearNotices,
+  sessionExpiredBtn: logoutAndClearNotices, // ログインの期限が切れたときの知らせ。ログアウトのボタンと同じ
   noticeConfirmBtn: confirmNotices,
   creditBtn:        openCreditModal,
   sendBtn:          sendTextInput,

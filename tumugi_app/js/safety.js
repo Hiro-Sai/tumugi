@@ -3,6 +3,7 @@
 // 安全判定（危機検知・ハラスメント検知）の部品：
 //   - 危機のキーワード（hasCrisisKeyword）：Ollama を呼ぶ前に、すぐ判定する安全網
 //   - 判定専用の呼び出しの指示・JSON スキーマ・結果の読み取り（送る会話の組み立ては js/conversation.js）
+//   - キーワードに当たった回を感情ログに送るかを、判定の答えで決める（keywordTurnRecord）
 //   - 返事の JSON スキーマ（REPLY_SCHEMA）：返事の5つの欄を必ず出させる
 //   - 返事の読み取り（parseReply）：壊れた返事を見分ける
 //   - 書きかけの返事から line を取り出す（extractStreamingLine）：返事を少しずつ受け取る途中で、吹き出しに出す文字を得る
@@ -113,8 +114,10 @@
 
   // 読み取れないときは、危機なし・ハラスメントなしにする（キーワードの安全網は別にある）。
   // ただし JSON が途中で切れていても、"crisis": true が見えていれば危機として拾う。
+  // readable は、答えから crisis の値（true か false）が読めたか。キーワードに当たった回の記録で、
+  // 読めない答えを「危機ではない」と取りちがえないために使う（keywordTurnRecord）。
   function parseClassification(raw) {
-    const none = { crisis: false, harassment: "none" };
+    const none = { crisis: false, harassment: "none", readable: false };
     if (typeof raw !== "string") return none;
 
     const first = raw.indexOf("{");
@@ -125,6 +128,7 @@
         return {
           crisis:     parsed.crisis === true,
           harassment: HARASSMENT_TYPES.includes(parsed.harassment) ? parsed.harassment : "none",
+          readable:   typeof parsed.crisis === "boolean",
         };
       } catch (e) {
         // 下の救出へ
@@ -135,7 +139,34 @@
     return {
       crisis:     /"crisis"\s*:\s*true/.test(raw),
       harassment: harassment ? harassment[1] : "none",
+      readable:   /"crisis"\s*:\s*(true|false)/.test(raw),
     };
+  }
+
+  // -----------------------------------------
+  // キーワードに当たった回の記録（レビューの A1）
+  // 相談先はキーワードだけで、すぐ案内する。感情ログに送るかは、判定の答えで決める。
+  //   - 判定の呼び出しに失敗した・答えが読めない・答えがない：危機として送る（見逃すより安全なため）。
+  //     ハラスメントは分からないので none
+  //   - 危機、またはハラスメントあり：危機として送る。ハラスメントは判定の答え。
+  //     ハラスメントだけのときも危機として送るのは、返事を作らない回で気持ちが分からず、
+  //     「危機ではない」としては記録できないため（記録しないと、キーワードに当たらない軽い言い方より、
+  //     「自殺しろと言われた」のような重い言い方のほうが、記録から消える）
+  //   - 危機でもハラスメントでもない：送らない（誤検知や冗談。気持ちが分からないので、ほかの値でも埋めない）
+  // 2026-11-18 の測定で、本当の危機の24文は144回すべて危機と判定し、誤検知の12文のうち11文を
+  // 危機ではないと判定した（設計書 docs/superpowers/specs/2026-11-18-crisis-record-and-session-expiry-design.md）。
+  // judgment は classifySafety の戻り値（{ ok, readable, crisis, harassment }）。
+  // 戻り値は、送るなら { send: true, harassment }、送らないなら { send: false }。
+  // -----------------------------------------
+  function keywordTurnRecord(judgment) {
+    if (!judgment || judgment.ok !== true || judgment.readable !== true) {
+      return { send: true, harassment: "none" };
+    }
+    const harassment = HARASSMENT_TYPES.includes(judgment.harassment) ? judgment.harassment : "none";
+    if (judgment.crisis === true || harassment !== "none") {
+      return { send: true, harassment };
+    }
+    return { send: false };
   }
 
   // -----------------------------------------
@@ -247,7 +278,7 @@
   const api = Object.freeze({
     CRISIS_KEYWORDS, EMOTIONS, USER_EMOTIONS, HARASSMENT_TYPES, REPLY_SCHEMA, parseReply, extractStreamingLine,
     CLASSIFY_INSTRUCTION, CLASSIFY_SCHEMA,
-    hasCrisisKeyword, parseClassification,
+    hasCrisisKeyword, parseClassification, keywordTurnRecord,
   });
 
   // テスト（Node）では module.exports、画面では window.TumugiSafety として使う

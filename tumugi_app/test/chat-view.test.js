@@ -60,6 +60,12 @@ test("statusText: 話している・考えている・聞いている（両方 t
   assert.equal(statusText({ busy: true, speaking: true }), "話しています");
 });
 
+test("statusText: ログインの期限が切れたら、ログインを待っている（話しているあいだは、話している）", () => {
+  assert.equal(statusText({ busy: false, speaking: false, expired: true }), "ログインを待っています");
+  assert.equal(statusText({ busy: true, speaking: false, expired: true }), "ログインを待っています");
+  assert.equal(statusText({ busy: false, speaking: true, expired: true }), "話しています");
+});
+
 test("STARTERS: 4つあり、label と text が空でなく、書き換えられない", () => {
   assert.equal(STARTERS.length, 4);
   for (const s of STARTERS) {

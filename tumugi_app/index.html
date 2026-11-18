@@ -74,6 +74,13 @@
 
       <!-- テキスト入力（企業向け展開に伴い、音声入力は廃止しテキストのみに一本化） -->
       <div class="compose">
+        <!-- ログインの期限が切れたときの知らせ。回が終わってから script.js が出し、そのあいだは話題の例・入力欄・送信を隠す。
+             ログイン画面へは、このボタンを押したときだけ移る（危機の案内などが、勝手に消えないように） -->
+        <div id="sessionExpired" class="session-expired" role="alert" hidden>
+          <p>ログインの期限が切れました。続けるには、もう一度ログインしてください。</p>
+          <p>ログイン画面に移ると、この画面の会話は消えます。</p>
+          <button id="sessionExpiredBtn" class="btn small" type="button">ログイン画面へ</button>
+        </div>
         <div id="starters" class="starters">
           <span class="starters-label">話題の例：</span>
           <!-- 話題の例のボタンは、JS が作る -->

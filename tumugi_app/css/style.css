@@ -186,6 +186,12 @@ body.page-chat {
 .compose-row .btn { flex: none; min-width: 88px; }
 .compose .btn:disabled { cursor: not-allowed; }
 .compose .hint { margin-top: 4px; }
+/* ログインの期限が切れたときの知らせ。入力の所の代わりに出す（お知らせと同じく、左に青い線）。
+   .session-expired[hidden] は、display を指定しても隠れるようにするため */
+.session-expired { padding: 2px 0 2px 14px; border-left: 4px solid var(--blue); }
+.session-expired[hidden] { display: none; }
+.session-expired .btn { margin-top: 10px; }
+.compose.expired .starters, .compose.expired .compose-row, .compose.expired > .hint { display: none; }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
