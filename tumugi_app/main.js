@@ -6,8 +6,11 @@ const Store = require("electron-store");
 const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaModel } = require("./net-policy");
 const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("./memory-crypto");
 const { STREAM_PIECE_CHANNEL, withRelayOptions, createLineSplitter } = require("./ollama-relay");
+const { createTaskQueue } = require("./task-queue");
 
 const store = new Store();
+// ストアの読み書きの順番待ち（下の「IPC: electron-store 操作」で説明）
+const storeTask = createTaskQueue();
 
 // 中継先の基準 URL と、中継してよいリクエストの一覧は net-policy.js にある。
 
@@ -33,7 +36,10 @@ const CONSENT_MAP_KEY = "emotion_consent_map"; // js/script.js の CONSENT_MAP_K
 const CPU_ONLY = process.argv.includes("--cpu-only");
 
 function clearConsentForExhibit() {
-  if (EXHIBIT_MODE) store.delete(CONSENT_MAP_KEY);
+  if (!EXHIBIT_MODE) return;
+  // 順番待ちに入れる（同意の保存がまだ終わっていないうちに先に消して、同意が次の来場者に残らないように）
+  storeTask(() => store.delete(CONSENT_MAP_KEY))
+    .catch(err => console.warn("[Store] 展示モードの同意を消せませんでした:", err.message));
 }
 
 let mainWindow = null;
@@ -183,17 +189,28 @@ function restrictRendererSession() {
 //   暗号化成功時   → { __enc: true,  data: "<base64 encrypted>" }
 //   平文フォールバック時 → { __enc: false, data: <元の値> }
 //   旧形式（導入前のデータ）→ ラッパーなしの生の値（後方互換で読み込み可）
+//
+// 暗号化・復号は、非同期の呼び方（encryptStringAsync・decryptStringAsync）を使う。
+// 同期の呼び方は Electron 45 で古い扱いになり、46 でなくなるため。
+// 同期の呼び方（Electron 44 まで）で暗号化したデータも、非同期の呼び方で読める（公式の説明）。
+//
+// ストアを読み書きする操作は、すべて順番待ち（storeTask）に入れて、1つずつ行う。
+// 暗号化・復号が非同期になったので、そのままだと、2つの操作が途中で入りまじることがある。
+// 例：パスワードの変更で記憶を付け替えている途中に、memory:set が前の鍵で暗号化した記憶を書くと、
+//     次に読むときに鍵が合わず、記憶が消えてしまう。
+// 同期の呼び方だったときは、どの操作も途中で止まらず、来た順に終わっていた。その順を守る。
+// 時間のかかる鍵づくり（deriveMemoryKey）は、順番待ちの外で行う（ほかの読み書きを待たせないため）。
 // =========================================
 
 function isEncWrapper(value) {
   return value !== null && typeof value === "object" && typeof value.__enc === "boolean" && "data" in value;
 }
 
-function wrapValue(value) {
-  if (safeStorage.isEncryptionAvailable()) {
+async function wrapValue(value) {
+  if (await safeStorage.isAsyncEncryptionAvailable()) {
     try {
       const json = JSON.stringify(value);
-      const encryptedBuf = safeStorage.encryptString(json);
+      const encryptedBuf = await safeStorage.encryptStringAsync(json);
       return { __enc: true, data: encryptedBuf.toString("base64") };
     } catch (err) {
       console.warn("[Store] 暗号化に失敗したため平文で保存します:", err.message);
@@ -202,12 +219,12 @@ function wrapValue(value) {
   }
   console.warn(
     "[Store] この環境ではOSレベルの暗号化(safeStorage)が利用できないため、平文で保存します。" +
-    "（safeStorage.isEncryptionAvailable() === false）"
+    "（safeStorage.isAsyncEncryptionAvailable() === false）"
   );
   return { __enc: false, data: value };
 }
 
-function unwrapValue(stored) {
+async function unwrapValue(stored) {
   if (stored === undefined) return undefined;
 
   if (!isEncWrapper(stored)) {
@@ -220,29 +237,32 @@ function unwrapValue(stored) {
   }
 
   try {
-    const buf  = Buffer.from(stored.data, "base64");
-    const json = safeStorage.decryptString(buf);
-    return JSON.parse(json);
+    const buf = Buffer.from(stored.data, "base64");
+    // shouldReEncrypt（OS の鍵が新しくなったので、暗号化し直すとよい、の印）は見ない。
+    // 値は、次に保存するときに、今の鍵で暗号化し直されるため
+    const { result } = await safeStorage.decryptStringAsync(buf);
+    return JSON.parse(result);
   } catch (err) {
     console.warn("[Store] 復号に失敗しました:", err.message);
     return undefined;
   }
 }
 
-ipcMain.handle("store:get", (event, key) => {
-  const stored = store.get(key);
-  return unwrapValue(stored);
-});
+ipcMain.handle("store:get", (event, key) => storeTask(() => unwrapValue(store.get(key))));
 
-ipcMain.handle("store:set", (event, key, value) => {
-  store.set(key, wrapValue(value));
-  return true;
-});
+ipcMain.handle("store:set", (event, key, value) =>
+  storeTask(async () => {
+    store.set(key, await wrapValue(value));
+    return true;
+  })
+);
 
-ipcMain.handle("store:delete", (event, key) => {
-  store.delete(key);
-  return true;
-});
+ipcMain.handle("store:delete", (event, key) =>
+  storeTask(() => {
+    store.delete(key);
+    return true;
+  })
+);
 
 // =========================================
 // IPC: つむぎの記憶（社員ごとに、その人のパスワードから作った鍵で暗号化する。memory-crypto.js）
@@ -250,6 +270,8 @@ ipcMain.handle("store:delete", (event, key) => {
 // 鍵はログインのとき（memory:unlock）に作り、このプロセスのメモリにだけ置く。ディスクには書かない。
 // ログアウト・アプリの終了で消える。画面側には鍵を渡さず、読む・書く・消すだけを受け付ける。
 // 保存するレコードは、さらに wrapValue（OS の暗号化）で包んで electron-store に入れる。
+// ふだんの読み書きは、順番待ち（storeTask）の中で行い、そのときの memorySession の鍵を使う。
+// 展示モードの記憶はメモリにだけ置き、ストアを使わないので、順番待ちに入れない（今までどおり、すぐ終わる）。
 // =========================================
 
 // ふだん：{ storeKey, key, salt }。展示モード：{ exhibitMemory }（記憶はここにだけ置く。まだないときは null）
@@ -267,7 +289,7 @@ ipcMain.handle("memory:unlock", async (event, employeeId, password) => {
   }
 
   const storeKey = `memory_${employeeId}`;
-  const record = unwrapValue(store.get(storeKey));
+  const record = await storeTask(() => unwrapValue(store.get(storeKey)));
   // 鍵はレコードと同じソルトから作る（ソルトを変えると、保存済みの記憶を読めなくなる）
   const salt = record?.salt ?? newSalt();
   memorySession = { storeKey, key: await deriveMemoryKey(password, salt), salt };
@@ -276,43 +298,54 @@ ipcMain.handle("memory:unlock", async (event, employeeId, password) => {
 
 // 戻り値：{ exists: この社員の記憶が保存されているか, memory: 記憶 }
 ipcMain.handle("memory:get", () => {
-  if (!memorySession) return { exists: false, memory: {} };
   if (EXHIBIT_MODE) {
-    const memory = memorySession.exhibitMemory;
+    const memory = memorySession?.exhibitMemory;
     return memory ? { exists: true, memory } : { exists: false, memory: {} };
   }
-  const record = unwrapValue(store.get(memorySession.storeKey));
-  if (record === undefined) return { exists: false, memory: {} };
+  return storeTask(async () => {
+    const session = memorySession;
+    if (!session) return { exists: false, memory: {} };
+    const record = await unwrapValue(store.get(session.storeKey));
+    if (record === undefined) return { exists: false, memory: {} };
 
-  try {
-    return { exists: true, memory: decryptMemory(memorySession.key, record) };
-  } catch (err) {
-    // パスワードがリセットされた・ファイルが壊れたなどで読めない記憶は、消して新しく始める
-    console.warn("[Memory] 記憶を読めなかったため、消して新しく始めます:", err.message);
-    store.delete(memorySession.storeKey);
-    return { exists: false, memory: {} };
-  }
+    try {
+      return { exists: true, memory: decryptMemory(session.key, record) };
+    } catch (err) {
+      // パスワードがリセットされた・ファイルが壊れたなどで読めない記憶は、消して新しく始める
+      console.warn("[Memory] 記憶を読めなかったため、消して新しく始めます:", err.message);
+      store.delete(session.storeKey);
+      return { exists: false, memory: {} };
+    }
+  });
 });
 
 ipcMain.handle("memory:set", (event, memory) => {
-  if (!memorySession) return false;
   if (memory === null || typeof memory !== "object" || Array.isArray(memory)) return false;
   if (EXHIBIT_MODE) {
+    if (!memorySession) return false;
     memorySession.exhibitMemory = { ...memory };
     return true;
   }
-  store.set(memorySession.storeKey, wrapValue(encryptMemory(memorySession.key, memorySession.salt, memory)));
-  return true;
+  return storeTask(async () => {
+    const session = memorySession;
+    if (!session) return false;
+    store.set(session.storeKey, await wrapValue(encryptMemory(session.key, session.salt, memory)));
+    return true;
+  });
 });
 
 ipcMain.handle("memory:delete", () => {
-  if (!memorySession) return false;
   if (EXHIBIT_MODE) {
+    if (!memorySession) return false;
     memorySession.exhibitMemory = null;
     return true;
   }
-  store.delete(memorySession.storeKey);
-  return true;
+  return storeTask(() => {
+    const session = memorySession;
+    if (!session) return false;
+    store.delete(session.storeKey);
+    return true;
+  });
 });
 
 // パスワードを変えたとき（サーバーでの変更が成功したあと）に、記憶の鍵を新しいパスワードのものに付け替える。
@@ -324,21 +357,27 @@ ipcMain.handle("memory:rekey", async (event, newPassword) => {
   const current = memorySession;
   const salt = newSalt();
   const key  = await deriveMemoryKey(newPassword, salt);
-  // 鍵を作っているあいだにログアウトした（別の社員になった）なら、何もしない
-  if (memorySession !== current) return false;
 
-  // 記憶は、鍵を作り終えてから読む（そのあいだに memory:set で保存された分も、付け替えに含めるため）
-  const record = unwrapValue(store.get(current.storeKey));
-  if (record !== undefined) {
-    try {
-      store.set(current.storeKey, wrapValue(reencryptMemory(current.key, record, key, salt)));
-    } catch (err) {
-      console.warn("[Memory] 記憶を付け替えられなかったため、消します:", err.message);
-      store.delete(current.storeKey);
+  // 読む・付け替える・書く・鍵を替える、までを1つの操作として順番待ちに入れる
+  // （途中に memory:set などが入りまじって、前の鍵で書かれないように）
+  return storeTask(async () => {
+    // 鍵を作っているあいだにログアウトした（別の社員になった）なら、何もしない
+    if (memorySession !== current) return false;
+
+    // 記憶は、鍵を作り終えてから読む（そのあいだに memory:set で保存された分も、付け替えに含めるため）
+    const record = await unwrapValue(store.get(current.storeKey));
+    if (record !== undefined) {
+      try {
+        store.set(current.storeKey, await wrapValue(reencryptMemory(current.key, record, key, salt)));
+      } catch (err) {
+        console.warn("[Memory] 記憶を付け替えられなかったため、消します:", err.message);
+        store.delete(current.storeKey);
+      }
     }
-  }
-  memorySession = { storeKey: current.storeKey, key, salt };
-  return true;
+    // 付け替えの途中でログインし直していたら（memory:unlock は順番待ちの外で鍵を替える）、その鍵を残す
+    if (memorySession === current) memorySession = { storeKey: current.storeKey, key, salt };
+    return true;
+  });
 });
 
 // 展示モードか（画面側で、パスワードの変更欄を隠すのに使う）
@@ -353,7 +392,11 @@ ipcMain.on("auth:login-success", () => {
   if (mainWindow) mainWindow.loadFile("index.html");
 });
 ipcMain.on("auth:logout", () => {
-  memorySession = null; // 次にログインする社員が、前の社員の鍵（展示モードでは記憶）を使えないようにする
+  // 次にログインする社員が、前の社員の鍵（展示モードでは記憶）を使えないようにする。
+  // 順番待ちに入れて、ログアウトの前に届いた記憶の保存などを、前の社員の鍵で終えてから消す
+  storeTask(() => {
+    memorySession = null;
+  });
   greetingPending = false;
   clearConsentForExhibit();
   // ダッシュボードを開いていれば閉じる（ダッシュボードの中で 401 になったときも、ここを通る）

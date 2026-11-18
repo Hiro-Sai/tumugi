@@ -24,6 +24,7 @@
       "net-policy.js",
       "memory-crypto.js",
       "ollama-relay.js",
+      "task-queue.js",
       "index.html",
       "login.html",
       "admin-demo.html",
@@ -94,7 +95,7 @@
     "electron-store": "^8.2.0"
   },
   "devDependencies": {
-    "electron": "^29.4.6",
+    "electron": "^45.2.3",
     "electron-builder": "^24.0.0"
   }
 }

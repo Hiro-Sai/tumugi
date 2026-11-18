@@ -34,7 +34,7 @@ cd tumugi_app
 npm test
 ```
 
-node:test で164個（外との通信のルール、安全判定、プロンプト、会話の履歴、中継の分け方、記憶の暗号化、口パク、パスワードの確認、社員の管理の確かめ、知らせの文）。
+node:test で168個（外との通信のルール、安全判定、プロンプト、会話の履歴、中継の分け方、記憶の暗号化、口パク、パスワードの確認、社員の管理の確かめ、知らせの文、保存の順番待ち）。
 
 ### サーバー（PHP の API）
 
@@ -68,11 +68,11 @@ docker compose -f compose.test.yaml down
 ## 必要なもの
 
 - Docker Desktop
-- Node.js（サーバーのテストを動かすなら 21 以上）
+- Node.js（22.12 以上。Electron 45 が求めるため）
 - Ollama（新しい版。モデル：`ollama pull gemma4:e4b`）
 - VOICEVOX
 
-最初の1回だけ、Docker イメージ・npm パッケージ・Ollama のモデルのダウンロードにインターネット接続が必要です。
+最初の1回だけ、Docker イメージ・npm パッケージ・Electron 本体・Ollama のモデルのダウンロードにインターネット接続が必要です。
 
 ## 起動手順
 
@@ -103,6 +103,8 @@ docker compose -f compose.test.yaml down
    npm install
    npm start
    ```
+
+   最初の `npm start` のときに、Electron 本体（約160MB）をダウンロードします。あとでネットにつながらない状態で使う PC では、`npm install` のあとに `npx install-electron --no` を実行して、先に取っておきます。
 
 立ち絵の画像はリポジトリに入っていないので、そのままではつむぎの絵が出ません（「立ち絵について」を参照）。
 
@@ -164,6 +166,48 @@ npm start -- --cpu-only
 ```
 
 Ollama へのすべての呼び出しに `num_gpu: 0`・`num_thread: 4` を付けて、CPU だけで動かします。待ち時間は、DevTools の console の `[時間]` で見ます。メニューを消しているので、DevTools は、確かめるあいだだけ `tumugi_app/main.js` の `//win.webContents.openDevTools();` のコメントを外して開きます（終わったら元に戻してください）。
+
+## Electron の版を上げるとき
+
+今は Electron 45 を使っています。45 のサポートは、2027年4月ごろまでの予定です（https://releases.electronjs.org/schedule ）。サポートが終わる前に、サポート中の版に上げます（およそ半年に1回）。
+
+Windows のスマート アプリ コントロールがオンの PC では、出たばかりの版の Electron 本体が止められて、`npm start` が `Error: spawn UNKNOWN` で止まることがあります。Electron 本体には署名がなく、出たばかりの版には、まだ評判がないためです。そのときは、`npm install electron@45.2.3` のように版を指定して、少し前の版を入れ直します（45.3.4 は出た翌日に止められ、出てから2週間の 45.2.3 は動きました）。スマート アプリ コントロールを切るのは、おすすめしません。
+
+上げたあとは、次の順に確かめます。
+
+1. アプリのテスト（`npm test`）と、サーバーのテスト（「テスト」を参照）。
+2. 画面を一通り使います。ログイン、仮のパスワードの変更、同意、会話（返事が少しずつ出る、声と口パク）、記憶（パスワードを変えたあとも読める）、設定、知らせ、管理者の画面、ログアウト、展示モード、`--cpu-only`。上げる前に保存した記憶が読めること、起動した端末に新しい警告やエラーが出ないことも見ます。
+3. 通信を測ります。上げる前と後に、リポジトリのルートで次のスクリプトを動かしながら一通り使い、記録を比べます（`-Label` は、記録に付ける名前です）。つむぎ本体から PC の外への接続が0件で、増えた接続先がないことを確かめます。
+
+   ```powershell
+   pwsh -File tools/net-watch.ps1 -Label electron45
+   ```
+
+   見えるのは TCP だけで、読むのは約2秒ごとなので、短い接続は見落とすことがあります。そのため、4 も行います。
+
+4. ファイアウォールで止めます。electron.exe から PC の外への通信を止める規則を一時的に作り、規則が効いていることを確かめてから、もう一度一通り使います。止める規則なので、PC の守りが弱くなることはありません。行き先から PC 自身（127 で始まるアドレスと `::1`）を除いているので、サーバー・Ollama・VOICEVOX にはつながります。
+
+   規則は、リポジトリのルートで、管理者の PowerShell から作ります。
+
+   ```powershell
+   $exe = (Resolve-Path "tumugi_app\node_modules\electron\dist\electron.exe").Path
+   New-NetFirewallRule -DisplayName "tumugi-test-block-outbound" -Direction Outbound -Action Block -Program $exe -RemoteAddress "0.0.0.0-126.255.255.255","128.0.0.0-255.255.255.255","::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
+   ```
+
+   規則が効いているかは、ふだんの PowerShell（管理者の権限はいりません）で、リポジトリのルートから試します。electron.exe から example.com へ1回だけつなぎ、`blocked EACCES` と出れば止まっています。
+
+   ```powershell
+   $exe = (Resolve-Path "tumugi_app\node_modules\electron\dist\electron.exe").Path
+   $env:ELECTRON_RUN_AS_NODE = "1"; & $exe -e "fetch('https://example.com').then(r => console.log('reached', r.status)).catch(e => console.log('blocked', e.cause ? e.cause.code : e.message))" | Out-Host; Remove-Item Env:ELECTRON_RUN_AS_NODE
+   ```
+
+   終わったら、管理者の PowerShell で規則を消します。
+
+   ```powershell
+   Remove-NetFirewallRule -DisplayName "tumugi-test-block-outbound"
+   ```
+
+設計と、45 に上げたときの結果は、`docs/superpowers/specs/2026-11-17-electron-upgrade-design.md` に書いています。
 
 ## セキュリティ上の前提
 
@@ -281,6 +325,7 @@ Get-Content -Raw -Encoding utf8 tumugi_server/sql/migrations/2026-11-13-b1-min-s
 ## うまく動かないとき
 
 - **ポート 8080 / 8081 がすでに使われている**：使っているアプリを止めてください。ポートを変える場合は、`compose.yaml` と `tumugi_app/net-policy.js` の `BASE_URLS` の両方を変更する必要があります。
+- **`npm start` が `Error: spawn UNKNOWN` で止まる**：Windows のスマート アプリ コントロールが、Electron 本体を止めていることがあります。イベント ビューアーの「アプリケーションとサービス ログ > Microsoft > Windows > CodeIntegrity > Operational」に、electron.exe を止めた記録があれば、そうです。少し前の版の Electron を入れ直してください（「Electron の版を上げるとき」を参照）。
 - **テーブル構造（`tumugi_server/sql/schema.sql`）を変えたのに反映されない**：構造は DB を初めて作るときにだけ読み込まれます。`docker compose --profile tools down -v` のあと、もう一度 `docker compose up -d` を実行してください（⚠️ DB の中身がすべて消えます。実運用の DB では実行しないでください。社員の管理のための変更は、消さずに足せます。「今ある DB に社員の管理を足すとき」を参照）。
 - **`seed` が `Exited (1)` で止まる（「デモ用ではない社員が…」と出る）**：デモの DB に、デモ用ではない社員（「社員」タブや管理者を作る道具で足した社員）がいます。試しに足した社員は、「社員」タブで退職にしてから「削除」で消し、`docker compose up -d` をもう一度実行してください。実運用の DB で出たときは、`.env` の `DEMO_SEED` を `false` にしてください。
 - **確かめ用に足した社員を、「削除」しようとすると断られる（「直近7日間に感情記録がある社員は削除できません」）**：その社員に、直近7日間の感情の記録があります。最後の記録から7日たつと消せます。デモの DB なら、`docker compose --profile tools down -v` のあと `docker compose up -d` で作り直せます（⚠️ DB の中身がすべて消えます）。確かめるときは、同意の画面で「送信しない」を選ぶと、記録が残りません。
