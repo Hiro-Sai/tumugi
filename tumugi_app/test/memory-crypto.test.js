@@ -6,7 +6,9 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 
-const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("../memory-crypto");
+const {
+  newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory, openMemoryRecord,
+} = require("../memory-crypto");
 
 const MEMORY = { "名前": "たろう", "最近の気分": "上司との関係で少し疲れている" };
 
@@ -95,4 +97,48 @@ test("違う鍵を古い鍵として渡すと、例外になる", async () => {
   const wrongKey = await deriveMemoryKey("wrong-pass", oldSalt);
 
   assert.throws(() => reencryptMemory(wrongKey, record, newKey, newSaltValue));
+});
+
+// -----------------------------------------
+// ログインのあと、保存してある記憶を開く（main.js の memory:get）
+// lost は「前の記憶を読めなかった」印で、「はじめに」の画面で本人に知らせる
+// -----------------------------------------
+test("openMemoryRecord: 何も保存されていなければ、記憶なし（知らせない）", async () => {
+  const key = await deriveMemoryKey("pass-1234", newSalt());
+
+  assert.deepEqual(openMemoryRecord(key, false, undefined), { exists: false, memory: {}, lost: false, discard: false });
+});
+
+test("openMemoryRecord: 読めれば、その記憶（知らせない）", async () => {
+  const salt = newSalt();
+  const key  = await deriveMemoryKey("pass-1234", salt);
+
+  assert.deepEqual(
+    openMemoryRecord(key, true, encryptMemory(key, salt, MEMORY)),
+    { exists: true, memory: MEMORY, lost: false, discard: false }
+  );
+});
+
+test("openMemoryRecord: 鍵が合わない・壊れているときは、消して知らせる", async () => {
+  const salt     = newSalt();
+  const key      = await deriveMemoryKey("pass-1234", salt);
+  const record   = encryptMemory(key, salt, MEMORY);
+  const otherKey = await deriveMemoryKey("pass-9999", salt); // パスワードがリセットされた・ほかの PC で変えた
+
+  const cases = [[otherKey, record], [key, { ...record, v: 2 }], [key, null], [key, "壊れた値"]];
+  for (const [k, r] of cases) {
+    const opened = openMemoryRecord(k, true, r);
+    assert.equal(opened.exists, false);
+    assert.deepEqual(opened.memory, {});
+    assert.equal(opened.lost, true);
+    assert.equal(opened.discard, true);
+    assert.equal(typeof opened.reason, "string"); // main.js が console に出す、読めなかった理由
+  }
+});
+
+test("openMemoryRecord: OS の暗号を外せないときは、消さずに知らせる", async () => {
+  const key = await deriveMemoryKey("pass-1234", newSalt());
+
+  // 外せなかったときは、レコードの代わりに undefined が届く（main.js の unwrapValue）
+  assert.deepEqual(openMemoryRecord(key, true, undefined), { exists: false, memory: {}, lost: true, discard: false });
 });

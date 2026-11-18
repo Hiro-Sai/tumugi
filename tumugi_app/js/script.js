@@ -87,6 +87,9 @@ let userMemory = {};
 // この社員の記憶が保存されているか。「はじめまして」画面を出すかどうかの判定に使う
 // （スキップしたときも空の記憶を保存するので、一度でも答えた社員は true になる）
 let hasSavedMemory = false;
+// 前の記憶を読めなかったか（パスワードがリセットされた・ほかの PC で変えた・ファイルが壊れたなど。
+// main.js の memory:get、扱いは memory-crypto.js の openMemoryRecord）。「はじめに」の画面で、もう一度聞く理由を出すのに使う
+let memoryLost = false;
 
 // 以前は記憶を localStorage に平文で、全社員共通の1つとして保存していた。
 // 誰の記憶か分からないため、引き継がずに消す（PC ごとの「はじめまして済み」の印も同じ）
@@ -98,6 +101,7 @@ async function loadMemoryFromStore() {
     const result = await window.electronAPI.memoryGet();
     userMemory = result?.memory ?? {};
     hasSavedMemory = !!result?.exists;
+    memoryLost = !!result?.lost;
   } catch (e) {
     console.warn("[Memory] 読み込み失敗:", e.message);
   }
@@ -865,7 +869,7 @@ function replyToHistoryText(reply) {
 // 前と変わるたびに onLine(line) を呼ぶ（取り出しは TumugiSafety.extractStreamingLine。まだ空のときは呼ばない）。
 // 戻り値は { content: 最後に届いた全文, data: 最後の行（語数と時間つき） }。
 // onLine に渡した文は途中のもので、返事が使えるかどうかは、呼んだ側が content で確かめる。
-// Ollama につながらないときなどは例外を投げる（err.reason 付き）。
+// Ollama につながらないときなどは例外を投げる（err.reason と err.status 付き。モデルがないときは status が 404）。
 // stream は main.js が付けるので、body には書かない。
 async function requestReply(messages, onLine) {
   const startedAt = performance.now();
@@ -902,6 +906,7 @@ async function requestReply(messages, onLine) {
   if (!ollamaRes.ok) {
     const err = new Error(ollamaRes.message || "ollama_error");
     err.reason = ollamaRes.reason;
+    err.status = ollamaRes.status; // モデルが入っていないとき（404）を見分けるため（TumugiOllama.isModelMissing）
     throw err;
   }
   logTimings("返事", ollamaRes.data, wallMs);
@@ -1276,6 +1281,8 @@ async function handleUserInput(userText) {
           `「ollama run ${getOllamaModel()}」が起動しているか確認してね`,
           "ai"
         );
+      } else if (TumugiOllama.isModelMissing(err)) {
+        showModelMissingMessage();
       } else {
         addMessage("え、ちょっとあーし頭真っ白になっちゃった…もっかい話しかけてくれる？", "ai");
       }
@@ -1970,6 +1977,9 @@ async function greetOnLogin() {
 // 初回セットアップモーダル
 // =========================
 function showSetupModal() {
+  // 前の記憶を読めなかったときだけ、もう一度聞く理由を出す
+  const lost = document.getElementById("setupLost");
+  if (lost) lost.hidden = !memoryLost;
   const modal = document.getElementById("setupModal");
   if (modal) modal.style.display = "flex";
 }
@@ -2019,18 +2029,35 @@ async function applyAdminNavVisibility() {
 
 // =========================
 // 起動時の接続チェック
+// Ollama・使うモデル・VOICEVOX を確かめて、足りないものを知らせる。入力は止めない
+// （Ollama を起動したり、モデルを入れたりすれば、アプリを開き直さなくても次の発言から話せるため）
 // =========================
+
+// 使うモデルが Ollama に入っていないときの知らせ。起動時の確かめと、話しかけて 404 が返ったときの2か所で出す。
+// 勧めるのは pull（run だと、入れたあとに端末で会話が始まるため）
+function showModelMissingMessage() {
+  const model = getOllamaModel();
+  addMessage(
+    `⚠️ AIのモデル（${model}）が入っていないみたい…\n` +
+    `「ollama pull ${model}」を実行してから話しかけてね`,
+    "ai"
+  );
+}
+
 async function checkConnections() {
-  const results = { ollama: false, voicevox: false };
+  const results = { ollama: false, model: false, voicevox: false };
 
   const ollamaRes = await window.electronAPI.netOllama({ path: "/api/tags", method: "GET" });
   results.ollama = ollamaRes.ok;
+
+  // Ollama が動いていれば、使うモデルが入っているかも、同じ一覧で確かめる（名前の比べ方は js/ollama.js の hasModel）
+  const currentModel = getOllamaModel();
+  results.model = results.ollama && TumugiOllama.hasModel(ollamaRes.data, currentModel);
 
   // VOICEVOX の音声エンジンはアプリ（main.js）が起動する。起動の途中なら、準備ができるまで待つ
   const voicevoxRes = await window.electronAPI.netVoicevox({ path: "/version", method: "GET" });
   results.voicevox = voicevoxRes.ok || await window.electronAPI.waitVoicevox();
 
-  const currentModel = getOllamaModel();
   if (!results.ollama && !results.voicevox) {
     addMessage(
       "⚠️ OllamaとVOICEVOXが両方起動していないみたい…\n" +
@@ -2044,12 +2071,16 @@ async function checkConnections() {
       `「ollama run ${currentModel}」を実行してからもう一度試してね`,
       "ai"
     );
-  } else if (!results.voicevox) {
-    addMessage(
-      "⚠️ VOICEVOXが起動できなかったみたい…声が出せないよ\n" +
-      "VOICEVOXがインストールされているか確かめてから、もう一度アプリを開いてね",
-      "ai"
-    );
+  } else {
+    // Ollama は動いている。モデルがないときと、VOICEVOX が動かないときは、それぞれの知らせを出す
+    if (!results.model) showModelMissingMessage();
+    if (!results.voicevox) {
+      addMessage(
+        "⚠️ VOICEVOXが起動できなかったみたい…声が出せないよ\n" +
+        "VOICEVOXがインストールされているか確かめてから、もう一度アプリを開いてね",
+        "ai"
+      );
+    }
   }
 
   return results;

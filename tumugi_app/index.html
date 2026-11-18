@@ -255,6 +255,9 @@
   <div id="setupModal" class="over" style="display:none;">
     <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
       <h2 id="setupTitle">はじめに</h2>
+      <!-- 前の記憶を読めなかったときだけ出す（script.js の showSetupModal）。
+           p ではなく div にしているのは、隠しているときに、下の段落の間隔（.dialog p + p）を変えないため -->
+      <div id="setupLost" class="setup-lost" hidden>前の記憶を読めなかったので、もう一度教えてください。パスワードが変わると（管理者が仮のパスワードを発行したときや、ほかの PC で変えたとき）、それまでの記憶は読めなくなります。</div>
       <p>入力した内容は、つむぎとの会話に使われます。このPC内にのみ保存され、会社には送信されません。入力は任意です。</p>
       <div class="stack setup-fields">
         <div class="field">

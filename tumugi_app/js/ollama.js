@@ -1,6 +1,7 @@
 // =========================================
 // js/ollama.js
-// Ollama の呼び出しの設定（モデル名・num_ctx・先読み用の body・時間の読み取り）を1か所にまとめる。
+// Ollama の呼び出しの設定（モデル名・num_ctx・先読み用の body・時間の読み取り）と、
+// 使うモデルが入っているかの確かめを1か所にまとめる。
 // 画面（index.html から script.js より先に読み込む）と、単体テスト（test/ollama.test.js）の両方から使う。
 //
 // 企業配布時にモデルを固定したい場合は DEFAULT_MODEL をここで直接書き換えるか、
@@ -55,9 +56,40 @@
     };
   }
 
+  // モデルの名前を、Ollama と同じ決まりでそろえる（比べるため）。読めないときは空の文字列。
+  // 大文字と小文字は区別しない。タグ（最後の「/」より後ろの「:」から先）がなければ latest として扱う。
+  // 最後の「/」より後ろだけを見るのは、ホスト名に付く「:5000」のような番号を、タグと取り違えないため。
+  // どちらも Ollama 0.40.16 で確かめた（2026-11-18。「GEMMA4:E4B」も、タグのない名前も、同じモデルとして扱われた）
+  function normalizeModelName(name) {
+    if (typeof name !== "string") return "";
+    const trimmed = name.trim().toLowerCase();
+    if (!trimmed) return "";
+    const lastPart = trimmed.slice(trimmed.lastIndexOf("/") + 1);
+    return lastPart.includes(":") ? trimmed : `${trimmed}:latest`;
+  }
+
+  // /api/tags の答え（{ models: [{ name, model, ... }] }）に、modelName のモデルがあるか。
+  // 名前の前のほうが同じというだけでは「ある」にしない（gemma4:e2b しか入っていないのに、gemma4:e4b を「ある」にしないため）。
+  // 答えが読めないときは false
+  function hasModel(tagsData, modelName) {
+    const want = normalizeModelName(modelName);
+    if (!want) return false;
+    const models = Array.isArray(tagsData?.models) ? tagsData.models : [];
+    return models.some((m) =>
+      normalizeModelName(m?.name) === want || normalizeModelName(m?.model) === want
+    );
+  }
+
+  // Ollama の答え（または、その reason と status を写した例外）が「モデルが入っていない」か。
+  // /api/chat は Ollama に必ずある道なので、404 はモデルがないときだけ返る
+  // （Ollama 0.40.16 で、少しずつ受け取るときも、まとめて受け取るときも、404 と「model '…' not found」が返った。2026-11-18）
+  function isModelMissing(res) {
+    return res?.reason === "http_error" && res?.status === 404;
+  }
+
   const api = Object.freeze({
     MODEL_KEY, DEFAULT_MODEL, NUM_CTX,
-    getOllamaModel, buildPrefillRequest, readTimings,
+    getOllamaModel, buildPrefillRequest, readTimings, hasModel, isModelMissing,
   });
 
   // テスト（Node）では module.exports、画面では window.TumugiOllama として使う

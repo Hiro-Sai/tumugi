@@ -6,6 +6,7 @@
 //   - encryptMemory(key, salt, memory) … 記憶（オブジェクト）を暗号化し、保存用のレコードにする（AES-256-GCM）
 //   - decryptMemory(key, record)       … レコードを復号して記憶に戻す。鍵が違う・書き換えられていたら例外
 //   - reencryptMemory(oldKey, record, newKey, newSalt) … パスワードを変えたとき、記憶を新しい鍵で暗号化し直す
+//   - openMemoryRecord(key, stored, record) … ログインのあと、保存してある記憶を開く（読めないときの扱いも決める）
 // Electron に依存しない純粋な関数だけを置き、main.js とテスト（test/memory-crypto.test.js）から使う。
 //
 // 鍵はパスワードからしか作れないので、本人のパスワードがなければ、同じ Windows アカウントを使う同僚も、
@@ -66,4 +67,24 @@ function reencryptMemory(oldKey, record, newKey, newSaltValue) {
   return encryptMemory(newKey, newSaltValue, decryptMemory(oldKey, record));
 }
 
-module.exports = { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory };
+// ログインのあと、保存してある記憶を開く（main.js の memory:get）。
+//   stored … この社員の記憶として、ストアに何か入っていたか
+//   record … OS の暗号（safeStorage）を外したレコード。外せなかったときは undefined
+// 戻り値：{ exists: 記憶があるか, memory: 記憶, lost: 前の記憶を読めなかったか, discard: 保存してある分を消すか }
+// lost のときは、「はじめに」の画面で、もう一度聞く理由を本人に知らせる（js/script.js）。
+//   - 何も入っていない        → 記憶なし。知らせない
+//   - OS の暗号を外せない      → 知らせるが、消さない（次に記憶を保存するときに上書きされる）
+//   - 鍵が合わない・壊れている → 消して、知らせる（パスワードがリセットされた・ほかの PC で変えた・ファイルが壊れた）。
+//                               reason は、console に出す読めなかった理由
+//   - 読めた                  → その記憶
+function openMemoryRecord(key, stored, record) {
+  if (!stored) return { exists: false, memory: {}, lost: false, discard: false };
+  if (record === undefined) return { exists: false, memory: {}, lost: true, discard: false };
+  try {
+    return { exists: true, memory: decryptMemory(key, record), lost: false, discard: false };
+  } catch (err) {
+    return { exists: false, memory: {}, lost: true, discard: true, reason: err.message };
+  }
+}
+
+module.exports = { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory, openMemoryRecord };

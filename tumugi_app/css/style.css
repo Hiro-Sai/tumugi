@@ -245,6 +245,9 @@ body {
 
 /* 最初の自己紹介 */
 .page-chat .setup-fields { margin-top: 16px; }
+/* 前の記憶を読めなかったときに出す、もう一度聞く理由（期限切れの知らせと同じく、左に青い線） */
+.page-chat .setup-lost { margin-bottom: 12px; padding: 2px 0 2px 14px; border-left: 4px solid var(--blue); }
+.page-chat .setup-lost[hidden] { display: none; }
 
 /* 記憶（行は script.js が作る） */
 .page-chat .memory-list { max-height: 45vh; margin-top: 8px; overflow-y: auto; }

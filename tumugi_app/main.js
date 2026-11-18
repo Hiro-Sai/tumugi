@@ -4,7 +4,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const Store = require("electron-store");
 const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaModel } = require("./net-policy");
-const { newSalt, deriveMemoryKey, encryptMemory, decryptMemory, reencryptMemory } = require("./memory-crypto");
+const { newSalt, deriveMemoryKey, encryptMemory, reencryptMemory, openMemoryRecord } = require("./memory-crypto");
 const { STREAM_PIECE_CHANNEL, withRelayOptions, createLineSplitter } = require("./ollama-relay");
 const { createTaskQueue } = require("./task-queue");
 
@@ -296,26 +296,27 @@ ipcMain.handle("memory:unlock", async (event, employeeId, password) => {
   return true;
 });
 
-// 戻り値：{ exists: この社員の記憶が保存されているか, memory: 記憶 }
+// 戻り値：{ exists: この社員の記憶が保存されているか, memory: 記憶, lost: 前の記憶を読めなかったか }
+// lost のときは、画面（js/script.js）が、「はじめに」の画面で、もう一度聞く理由を本人に知らせる
 ipcMain.handle("memory:get", () => {
   if (EXHIBIT_MODE) {
     const memory = memorySession?.exhibitMemory;
-    return memory ? { exists: true, memory } : { exists: false, memory: {} };
+    return memory ? { exists: true, memory, lost: false } : { exists: false, memory: {}, lost: false };
   }
   return storeTask(async () => {
     const session = memorySession;
-    if (!session) return { exists: false, memory: {} };
-    const record = await unwrapValue(store.get(session.storeKey));
-    if (record === undefined) return { exists: false, memory: {} };
-
-    try {
-      return { exists: true, memory: decryptMemory(session.key, record) };
-    } catch (err) {
-      // パスワードがリセットされた・ファイルが壊れたなどで読めない記憶は、消して新しく始める
-      console.warn("[Memory] 記憶を読めなかったため、消して新しく始めます:", err.message);
+    if (!session) return { exists: false, memory: {}, lost: false };
+    const stored = store.get(session.storeKey);
+    // 読めないときの扱い（消すか、知らせるか）は memory-crypto.js の openMemoryRecord
+    const opened = openMemoryRecord(session.key, stored !== undefined, await unwrapValue(stored));
+    if (opened.discard) {
+      // パスワードがリセットされた・ほかの PC で変えた・ファイルが壊れたなどで読めない記憶は、消して新しく始める
+      console.warn("[Memory] 記憶を読めなかったため、消して新しく始めます:", opened.reason);
       store.delete(session.storeKey);
-      return { exists: false, memory: {} };
+    } else if (opened.lost) {
+      console.warn("[Memory] 記憶の OS の暗号を外せなかったため、記憶なしで始めます（次に保存するときに上書きされます）");
     }
+    return { exists: opened.exists, memory: opened.memory, lost: opened.lost };
   });
 });
 
