@@ -4,8 +4,9 @@
 // 使うモデルが入っているかの確かめを1か所にまとめる。
 // 画面（index.html から script.js より先に読み込む）と、単体テスト（test/ollama.test.js）の両方から使う。
 //
-// 企業配布時にモデルを固定したい場合は DEFAULT_MODEL をここで直接書き換えるか、
-// 将来的に設定ファイル読み込み機構を実装してここで上書きすること。
+// 使うモデルは DEFAULT_MODEL だけで決める。以前は、PC（localStorage の tumugi_model）に保存した名前を先に使っていたが、
+// 書き換える画面がなく、古い名前が残ると使い続けてしまうため、読まなくした（2026-11-20、レビューの C1）。
+// モデルを変えるときは DEFAULT_MODEL をここで書き換えるか、将来の設定ファイル（レビューの D8）で上書きすること。
 //
 // /api/chat には必ず think: false を付ける。Gemma 4 は何も指定しないと
 // 「考えてから答える」モードで動き、考える部分だけで num_predict を使い切って
@@ -20,18 +21,8 @@
 (function () {
   "use strict";
 
-  const MODEL_KEY     = "tumugi_model";
   const DEFAULT_MODEL = "gemma4:e4b";
   const NUM_CTX       = 8192;
-
-  // storage：localStorage など。保存がない・空・storage がない・読めないときは、DEFAULT_MODEL
-  function getOllamaModel(storage) {
-    try {
-      return (storage && storage.getItem(MODEL_KEY)) || DEFAULT_MODEL;
-    } catch (e) {
-      return DEFAULT_MODEL;
-    }
-  }
 
   // 先読みと整え用の body。messages の最後が assistant だと、Ollama はその続きを書く形で読む。
   // 書かせるのは1語だけ（num_predict: 1）で、読ませた入力をキャッシュに残すのが目的
@@ -88,8 +79,8 @@
   }
 
   const api = Object.freeze({
-    MODEL_KEY, DEFAULT_MODEL, NUM_CTX,
-    getOllamaModel, buildPrefillRequest, readTimings, hasModel, isModelMissing,
+    DEFAULT_MODEL, NUM_CTX,
+    buildPrefillRequest, readTimings, hasModel, isModelMissing,
   });
 
   // テスト（Node）では module.exports、画面では window.TumugiOllama として使う

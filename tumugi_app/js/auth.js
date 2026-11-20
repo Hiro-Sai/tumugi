@@ -272,7 +272,7 @@ async function prefetchOnLoginScreen() {
       path: "/api/chat",
       method: "POST",
       body: TumugiOllama.buildPrefillRequest(
-        TumugiOllama.getOllamaModel(localStorage),
+        TumugiOllama.DEFAULT_MODEL,
         [{ role: "system", content: TumugiSafety.CLASSIFY_INSTRUCTION }]
       ),
     });

@@ -6,22 +6,18 @@
 const test   = require("node:test");
 const assert = require("node:assert/strict");
 
+const ollama = require("../js/ollama");
 const {
-  NUM_CTX, getOllamaModel, buildPrefillRequest, readTimings, hasModel, isModelMissing,
-} = require("../js/ollama");
+  DEFAULT_MODEL, NUM_CTX, buildPrefillRequest, readTimings, hasModel, isModelMissing,
+} = ollama;
 
 // -----------------------------------------
-// getOllamaModel
+// 使うモデル（DEFAULT_MODEL だけで決める。PC に保存した値は読まない。レビューの C1）
 // -----------------------------------------
-test("getOllamaModel: 保存したモデル名を使う", () => {
-  assert.equal(getOllamaModel({ getItem: () => "gemma4:e2b" }), "gemma4:e2b");
-});
-
-test("getOllamaModel: 保存がない・空・storage がない・読めないときは gemma4:e4b", () => {
-  assert.equal(getOllamaModel({ getItem: () => null }), "gemma4:e4b");
-  assert.equal(getOllamaModel({ getItem: () => "" }), "gemma4:e4b");
-  assert.equal(getOllamaModel(undefined), "gemma4:e4b");
-  assert.equal(getOllamaModel({ getItem: () => { throw new Error("読めない"); } }), "gemma4:e4b");
+test("使うモデルは DEFAULT_MODEL（gemma4:e4b）だけで決め、保存した値を読むしくみはない", () => {
+  assert.equal(DEFAULT_MODEL, "gemma4:e4b");
+  assert.equal(ollama.getOllamaModel, undefined);
+  assert.equal(ollama.MODEL_KEY, undefined);
 });
 
 // -----------------------------------------

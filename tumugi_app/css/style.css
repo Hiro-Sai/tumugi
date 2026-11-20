@@ -136,6 +136,8 @@ body.page-chat {
 /* 状態の表示 */
 .status { align-self: center; display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 13em; margin: 12px 0 10px; padding: 3px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 99px; font-size: 14px; line-height: 1.6; }
 .status::before { content: ""; flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+/* 声の準備ができるまでだけ、状態の下に出す（script.js の setVoiceState）。状態と同じ行に足すと、欄の幅に入りきらず折れるため */
+.status-note { align-self: center; margin: -4px 0 10px; font-size: var(--fs-sub); color: var(--ink-sub); }
 
 .nav { display: flex; flex-direction: column; gap: 4px; }
 .nav button { display: grid; grid-template-columns: 26px 1fr; column-gap: 10px; align-items: center; text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 12px; line-height: 1.5; cursor: pointer; overflow-wrap: anywhere; }

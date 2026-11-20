@@ -7,6 +7,11 @@ let isSpeaking     = false;
 let isReady        = false; // 起動してから、一度でも入力できるようになったか（状態の表示用）
 let isBusy         = false; // 発言を処理している間（setButtonBusy が切り替える）。入力欄と送信、話題の例を止める
 let mouthOpen      = false; // 声に合わせて口が開いているか（playVoice が切り替える）
+// 声（VOICEVOX）の状態。"ready"＝使える／"starting"＝アプリが音声エンジンを起動している途中／"unavailable"＝起動できなかった。
+// 決めるのは checkConnections と onVoicevoxSettled。起動の途中は待たずに会話を始め、返事は文字だけにする（レビューの A7）
+let voiceState     = "ready";
+// 声の準備ができる前に、文字だけで出したあいさつ。準備ができたとき、まだ何も送っていなければ声で読む（onVoicevoxSettled）
+let pendingGreetingVoice = null;
 
 // =========================
 // 会話履歴（マルチターン）
@@ -61,21 +66,13 @@ let isSummarizing = false;
 // =========================
 // Ollama 設定
 // モデル名・num_ctx・think の設定と、その理由は js/ollama.js にある（index.html で script.js より先に読み込む）。
-// 企業配布時にモデルを固定したい場合も、js/ollama.js の DEFAULT_MODEL を書き換える。
+// 使うモデルは js/ollama.js の DEFAULT_MODEL だけで決める。企業配布時にモデルを固定したい場合も、そこを書き換える。
 // 一般社員向けUIからのモデル切り替え機能は廃止済み（運用者のみが対応する想定）。
-// checkModelAvailability() 等の関数自体は残しているが、対応するUI要素が
-// index.html側にないため、現状呼び出されることはない。
 // =========================
 const OLLAMA_NUM_CTX = TumugiOllama.NUM_CTX;
 
 function getOllamaModel() {
-  return TumugiOllama.getOllamaModel(localStorage);
-}
-
-function saveOllamaModel(modelName) {
-  const name = modelName.trim();
-  if (!name) return;
-  localStorage.setItem(TumugiOllama.MODEL_KEY, name);
+  return TumugiOllama.DEFAULT_MODEL;
 }
 
 // =========================
@@ -92,8 +89,12 @@ let hasSavedMemory = false;
 let memoryLost = false;
 
 // 以前は記憶を localStorage に平文で、全社員共通の1つとして保存していた。
-// 誰の記憶か分からないため、引き継がずに消す（PC ごとの「はじめまして済み」の印も同じ）
-const LEGACY_LOCAL_KEYS = ["tumugi_user_memory", "tumugi_setup_done", "tumugi_notice_done"];
+// 誰の記憶か分からないため、引き継がずに消す（PC ごとの「はじめまして済み」の印も同じ）。
+// 前の設定画面で保存していたモデル名とキャラ設定（返事の指示）も、もう読まないので消す（レビューの C1）
+const LEGACY_LOCAL_KEYS = [
+  "tumugi_user_memory", "tumugi_setup_done", "tumugi_notice_done",
+  "tumugi_model", "tumugi_prompt_presets", "tumugi_active_preset",
+];
 
 async function loadMemoryFromStore() {
   LEGACY_LOCAL_KEYS.forEach(key => localStorage.removeItem(key));
@@ -290,22 +291,16 @@ function applyPendingRebuild() {
 }
 
 // =========================
-// プロンプトプリセット管理
-// 一般社員向けUIからの編集機能は廃止済み（企業向け展開に伴う対応）。
-// 仕組み（プリセットの保存・切り替え）自体は残しているが、対応するUI要素が
-// index.html側にないため、実質的に常に default プリセットが使われる。
-// default プリセットは、localStorage に保存された写しではなく、常に
-// このファイルの DEFAULT_PROMPT_TEMPLATE を使う（getActivePreset）。
-// 写しを使うと、初回起動時の古いプロンプトのまま更新されないため。
+// 返事の指示（つむぎの性格・話し方・出力の形）
+// 返事のシステムプロンプトには、いつもこの DEFAULT_PROMPT_TEMPLATE を使う（buildSystemPrompt）。
+// 以前は、キャラ設定（プリセット）を localStorage に保存して切り替えるしくみがあったが、
+// 切り替える画面がなく、古い写しが残ると使い続けてしまうため、なくした（2026-11-20、レビューの C1）。
 // 配布時に別の性格・プロンプトを使いたい場合は、運用者がここを直接編集するか、
-// 将来的な設定ファイル読み込み機構を実装すること。
+// 将来の設定ファイル（レビューの D8）で上書きすること。
 // プロンプトには毎回変わる内容を入れない（記憶・要約・動的ノートは buildSystemPrompt() と
 // askOllama() が後ろに付ける）。先頭に近いところが変わると、キャッシュが効かなくなるため。
 // 返事の決まりの理由と測定は docs/superpowers/specs/2026-11-04-reply-repetition-design.md
 // =========================
-const PRESET_KEY        = "tumugi_prompt_presets";
-const ACTIVE_PRESET_KEY = "tumugi_active_preset";
-
 const DEFAULT_PROMPT_TEMPLATE = `あなたは「つむぎ」という共感AIです。ユーザーの話をじっくり聞いて、気持ちに寄り添う会話をします。
 
 記憶にある情報は不自然にならない範囲で自然に活かすこと。
@@ -375,49 +370,6 @@ NG: {"user_emotion":"tired","emotion":"sad","line":"それはきついよね。�
 NG: {"user_emotion":"sad","emotion":"sad","line":"我慢しないでいいんだよ？","share":"","question":""}
 NG: {"user_emotion":"tired","emotion":"sad","line":"あー、今日もお疲れ様だったわね。一日頑張ったんだ、それってすごいことじゃん","share":"","question":""}`;
 
-function loadPresets() {
-  try {
-    const raw = localStorage.getItem(PRESET_KEY);
-    if (raw) {
-      const presets = JSON.parse(raw);
-      if (Array.isArray(presets) && presets.length > 0) return presets;
-    }
-  } catch (e) {
-    console.warn("[Preset] 読み込み失敗:", e);
-  }
-  const defaultPreset = {
-    id: "default",
-    name: "つむぎ（標準）",
-    prompt: DEFAULT_PROMPT_TEMPLATE,
-  };
-  savePresets([defaultPreset]);
-  return [defaultPreset];
-}
-
-function savePresets(presets) {
-  try {
-    localStorage.setItem(PRESET_KEY, JSON.stringify(presets));
-  } catch (e) {
-    console.warn("[Preset] 保存失敗:", e);
-  }
-}
-
-function getActivePresetId() {
-  return localStorage.getItem(ACTIVE_PRESET_KEY) || "default";
-}
-
-function setActivePresetId(id) {
-  localStorage.setItem(ACTIVE_PRESET_KEY, id);
-}
-
-function getActivePreset() {
-  const presets  = loadPresets();
-  const activeId = getActivePresetId();
-  const preset   = presets.find(p => p.id === activeId) || presets[0];
-  if (preset.id === "default") return { ...preset, prompt: DEFAULT_PROMPT_TEMPLATE };
-  return preset;
-}
-
 // =========================
 // 動的ノートは js/prompt.js の buildDynamicNote が作る。毎回変わるので、askOllama() が今回の発言の後ろに付ける
 // =========================
@@ -431,9 +383,8 @@ function getActivePreset() {
 // 会話の途中で記憶が増えても、システムプロンプトは変えない（作り直すときに、そのときの記憶と要約を入れ直す）。
 // =========================
 function buildSystemPrompt() {
-  const preset = getActivePreset();
   return TumugiPrompt.buildReplySystemPrompt(
-    preset.prompt || DEFAULT_PROMPT_TEMPLATE,
+    DEFAULT_PROMPT_TEMPLATE,
     memoryToText(loadMemory()),
     summaryToText()
   );
@@ -598,7 +549,9 @@ async function synthesizeVoice(text) {
 
 // 合成に失敗してもエラーで落とさず、Errorオブジェクトを返すだけにするラッパー
 // （裏で並行合成している時に失敗しても、会話全体を止めないため）
+// 音声エンジンの起動の途中は、VOICEVOX に頼まずに返す（まだ答えないため）。呼ぶ側は知らせを出さず、文字だけにする
 async function synthesizeVoiceSafe(text) {
+  if (voiceState === "starting") return new Error("voice_starting");
   try {
     return await synthesizeVoice(text);
   } catch (err) {
@@ -608,6 +561,8 @@ async function synthesizeVoiceSafe(text) {
 }
 
 function showVoicevoxWarning() {
+  // 起動のときに「起動できなかった」と知らせたあとは、重ねて出さない（onVoicevoxSettled）
+  if (voiceState === "unavailable") return;
   // 1つだけ出す。ほかの発言と同じ形（名前と時刻つき）で足す
   const already = document.querySelector(".voicevox-warn");
   if (!already) {
@@ -636,13 +591,15 @@ async function playVoice(voice) {
 
     await new Promise((resolve, reject) => {
       audio.onplay  = () => requestAnimationFrame(animate);
-      audio.onended = () => { URL.revokeObjectURL(voice.url); resolve(); };
+      audio.onended = () => resolve();
       audio.onerror = (e) => reject(new Error(`audio error: ${e}`));
       audio.play().catch(reject);
     });
   } catch (err) {
     console.error("[VOICEVOX]", err);
   } finally {
+    // 最後まで再生したときも、再生に失敗したときも、作った音声のメモリを放す（レビューの A10）
+    URL.revokeObjectURL(voice.url);
     isSpeaking = false;
     mouthOpen = false;
     updateFace();
@@ -650,7 +607,7 @@ async function playVoice(voice) {
   }
 }
 
-// 単発の合成→再生（互換用。用途が単純な箇所ではこちらを使う）
+// 単発の合成→再生（声の準備ができたあとに、文字だけで出したあいさつを読むときに使う。onVoicevoxSettled）
 async function speakWithVOICEVOX(text) {
   const result = await synthesizeVoiceSafe(text);
   if (result instanceof Error) {
@@ -1272,6 +1229,8 @@ function onTextInputKeydown(event) {
 // =========================
 async function handleUserInput(userText) {
   turnInProgress = true;
+  // 何か送ったあとは、文字だけで出したあいさつを、あとから声で読まない（会話が先に進んでいるため）
+  pendingGreetingVoice = null;
   try {
     turnStartedAt = performance.now();
     addMessage(userText, "user");
@@ -1651,10 +1610,8 @@ async function logoutAndClearNotices() {
 // 設定モーダル（感情ログ同意の確認・撤回と、パスワードの変更）
 //
 // 以前はここでプロンプト・AIモデルの編集UIも扱っていたが、企業向け展開に伴い
-// 一般社員向けUIからは廃止した。renderPresetList()・checkModelAvailability()等、
-// プリセット/モデル関連の関数自体はこのファイル内に残しているが、対応する
-// HTML要素がindex.html側にないため、現状呼び出されることはない
-// （運用者が配布前に別途対応する想定）。
+// 一般社員向けUIからは廃止した。残っていた関数（キャラ設定の一覧・モデルの確かめなど）も、
+// 呼ばれていなかったので消した（レビューの C1）。
 // =========================
 async function openPromptModal() {
   refreshConsentSettingUI();
@@ -1759,205 +1716,6 @@ async function changePassword() {
   }
 }
 
-function setModelQuick(modelName) {
-  const input = document.getElementById("modelNameInput");
-  if (input) input.value = modelName;
-  document.querySelectorAll(".model-quick-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.textContent === modelName);
-  });
-  const result = document.getElementById("modelCheckResult");
-  if (result) result.textContent = "";
-}
-
-// Ollamaに問い合わせてモデルがpull済みか確認
-async function checkModelAvailability() {
-  const input    = document.getElementById("modelNameInput");
-  const resultEl = document.getElementById("modelCheckResult");
-  if (!input || !resultEl) return;
-
-  const modelName = input.value.trim();
-  if (!modelName) return;
-
-  resultEl.textContent = "確認中…";
-  resultEl.className = "model-check-result";
-
-  const tagsRes = await window.electronAPI.netOllama({ path: "/api/tags", method: "GET" });
-
-  if (!tagsRes.ok) {
-    resultEl.textContent = "✗ Ollamaに繋がりませんでした。起動しているか確認してください";
-    resultEl.className = "model-check-result ng";
-    return;
-  }
-
-  const models = (tagsRes.data.models || []).map(m => m.name);
-  const found = models.some(m =>
-    m === modelName || m.startsWith(modelName + ":") || modelName.startsWith(m.split(":")[0])
-  );
-
-  if (found) {
-    resultEl.textContent = `✓ ${modelName} は使用可能です`;
-    resultEl.className = "model-check-result ok";
-  } else {
-    resultEl.textContent = `✗ ${modelName} がまだダウンロードされていません。「ollama pull ${modelName}」を実行してください`;
-    resultEl.className = "model-check-result ng";
-  }
-}
-
-// -----------------------------------------
-// XSS対策：preset.name はユーザーが自由に編集できる値のため、
-// 表示時は必ずescapeHtml()を通す。preset.id はプログラム生成のみ
-// （"default" または "preset_"+Date.now()）でユーザー入力を受け付けないため対象外。
-// 対応するHTML要素は現状index.htmlにないため、この関数は現状呼び出されない。
-// クリックは下のイベント委譲で処理する（CSP で inline onclick が動かないため）。
-// -----------------------------------------
-function renderPresetList() {
-  const list = document.getElementById("presetList");
-  if (!list) return;
-  const presets  = loadPresets();
-  const activeId = getActivePresetId();
-
-  list.innerHTML = presets.map(p => `
-    <div class="preset-item ${p.id === activeId ? 'active' : ''}" data-id="${escapeHtml(p.id)}">
-      <span class="preset-name" data-action="select">${escapeHtml(p.name)}</span>
-      <div class="preset-actions">
-        <button class="preset-icon-btn" data-action="duplicate" title="複製">⧉</button>
-        ${p.id !== "default" ? `<button class="preset-icon-btn preset-delete" data-action="delete" title="削除">✕</button>` : ""}
-      </div>
-    </div>
-  `).join("");
-}
-
-// プリセット一覧の操作をイベント委譲で処理する（inline onclick の文字列組み立てを廃止。CSP 対応）。
-// id は .preset-item の data-id から取る。
-document.addEventListener("click", (event) => {
-  const target = event.target.closest(".preset-item [data-action]");
-  if (!target) return;
-  const id = target.closest(".preset-item").dataset.id;
-
-  if (target.dataset.action === "select") {
-    selectPreset(id);
-  } else if (target.dataset.action === "duplicate") {
-    duplicatePreset(id);
-  } else if (target.dataset.action === "delete") {
-    deletePreset(id);
-  }
-});
-
-function selectPreset(id) {
-  setActivePresetId(id);
-  renderPresetList();
-  loadPresetIntoEditor(id);
-}
-
-function loadPresetIntoEditor(id) {
-  const presets = loadPresets();
-  const preset  = presets.find(p => p.id === id) || presets[0];
-  const nameInput  = document.getElementById("presetNameInput");
-  const promptArea = document.getElementById("presetPromptArea");
-  const resetBtn   = document.getElementById("presetResetBtn");
-  if (nameInput)  nameInput.value  = preset.name;
-  if (promptArea) promptArea.value = preset.prompt;
-  if (nameInput) nameInput.disabled = (preset.id === "default");
-  if (resetBtn) resetBtn.style.display = (preset.id === "default") ? "" : "none";
-}
-
-function getEditingPresetId() {
-  const activeItem = document.querySelector(".preset-item.active");
-  return activeItem ? activeItem.dataset.id : getActivePresetId();
-}
-
-function saveCurrentPreset() {
-  const id = getEditingPresetId();
-  const presets = loadPresets();
-  const preset  = presets.find(p => p.id === id);
-  if (!preset) return;
-
-  const nameInput  = document.getElementById("presetNameInput");
-  const promptArea = document.getElementById("presetPromptArea");
-  const modelInput = document.getElementById("modelNameInput");
-
-  if (preset.id !== "default" && nameInput) {
-    const newName = nameInput.value.trim();
-    if (newName) preset.name = newName;
-  }
-  if (promptArea) preset.prompt = promptArea.value;
-
-  if (modelInput && modelInput.value.trim()) {
-    saveOllamaModel(modelInput.value.trim());
-  }
-
-  savePresets(presets);
-  renderPresetList();
-
-  const btn = document.getElementById("presetSaveBtn");
-  if (btn) {
-    const original = btn.textContent;
-    btn.textContent = "✓ 保存しました";
-    setTimeout(() => { btn.textContent = original; }, 1200);
-  }
-}
-
-function duplicatePreset(id) {
-  const presets = loadPresets();
-  const source  = presets.find(p => p.id === id);
-  if (!source) return;
-
-  const newPreset = {
-    id: "preset_" + Date.now(),
-    name: source.name + "のコピー",
-    prompt: source.prompt,
-  };
-  presets.push(newPreset);
-  savePresets(presets);
-  setActivePresetId(newPreset.id);
-  renderPresetList();
-  loadPresetIntoEditor(newPreset.id);
-}
-
-function deletePreset(id) {
-  if (id === "default") return;
-  if (!confirm("このキャラ設定を削除してもいい？")) return;
-
-  let presets = loadPresets();
-  presets = presets.filter(p => p.id !== id);
-  savePresets(presets);
-
-  if (getActivePresetId() === id) {
-    setActivePresetId("default");
-  }
-  renderPresetList();
-  loadPresetIntoEditor(getActivePresetId());
-}
-
-function createNewPreset() {
-  const presets = loadPresets();
-  const newPreset = {
-    id: "preset_" + Date.now(),
-    name: "新しいキャラ",
-    prompt: DEFAULT_PROMPT_TEMPLATE,
-  };
-  presets.push(newPreset);
-  savePresets(presets);
-  setActivePresetId(newPreset.id);
-  renderPresetList();
-  loadPresetIntoEditor(newPreset.id);
-}
-
-function resetPresetToDefault() {
-  const id = getEditingPresetId();
-  if (id !== "default") return;
-  if (!confirm("標準のプロンプトに戻してもいい？編集内容は失われます。")) return;
-
-  const presets = loadPresets();
-  const preset  = presets.find(p => p.id === "default");
-  if (preset) {
-    preset.prompt = DEFAULT_PROMPT_TEMPLATE;
-    preset.name   = "つむぎ（標準）";
-    savePresets(presets);
-  }
-  loadPresetIntoEditor("default");
-}
-
 // =========================
 // 注意事項モーダル（社員ごとに、まだ同意の意思決定をしていない場合のみ表示）
 // =========================
@@ -1996,6 +1754,7 @@ async function handleNoticeConsent(consented) {
 // 先読みは、声を読むのを待たせないよう、待たずに始める。
 // 発言を送れるようにするのも、ここ（window.onload で止めてある。理由はそちら）。会話を作ってあいさつを足したら送れるようにする。
 // あいさつを読むのは待たない（読んでいるあいだは、今までどおり isSpeaking で送れない）。あいさつを出さないときも送れるようにする。
+// 声の準備（VOICEVOX）がまだのときは、文字だけで出し、準備ができたときに、まだ何も送っていなければ読む（レビューの A7）。
 // =========================
 async function greetOnLogin() {
   let greeting = null;
@@ -2018,6 +1777,8 @@ async function greetOnLogin() {
 
   currentEmotion = "happy";
   updateFace();
+  // 声の準備がまだなら、あいさつは文字だけで出し、準備ができたときに読む（onVoicevoxSettled）
+  if (voiceState === "starting") pendingGreetingVoice = greeting;
   await showTwoPartResponse(greeting, "", "");
 }
 
@@ -2079,6 +1840,8 @@ async function applyAdminNavVisibility() {
 // 起動時の接続チェック
 // Ollama・使うモデル・VOICEVOX を確かめて、足りないものを知らせる。入力は止めない
 // （Ollama を起動したり、モデルを入れたりすれば、アプリを開き直さなくても次の発言から話せるため）
+// VOICEVOX は待たない。アプリ（main.js）が音声エンジンを起動している途中なら、先に会話を始め、
+// 準備ができたら声を使い始める。起動できなかったときは、分かった時点で知らせる（onVoicevoxSettled。レビューの A7）
 // =========================
 
 // 使うモデルが Ollama に入っていないときの知らせ。起動時の確かめと、話しかけて 404 が返ったときの2か所で出す。
@@ -2092,46 +1855,58 @@ function showModelMissingMessage() {
   );
 }
 
-async function checkConnections() {
-  const results = { ollama: false, model: false, voicevox: false };
+// 声の状態を変え、左の欄の「声は準備中です」を、起動の途中のあいだだけ出す
+function setVoiceState(state) {
+  voiceState = state;
+  const note = document.getElementById("voiceStatusNote");
+  if (note) note.hidden = state !== "starting";
+}
 
-  const ollamaRes = await window.electronAPI.netOllama({ path: "/api/tags", method: "GET" });
-  results.ollama = ollamaRes.ok;
-
-  // Ollama が動いていれば、使うモデルが入っているかも、同じ一覧で確かめる（名前の比べ方は js/ollama.js の hasModel）
-  const currentModel = getOllamaModel();
-  results.model = results.ollama && TumugiOllama.hasModel(ollamaRes.data, currentModel);
-
-  // VOICEVOX の音声エンジンはアプリ（main.js）が起動する。起動の途中なら、準備ができるまで待つ
-  const voicevoxRes = await window.electronAPI.netVoicevox({ path: "/version", method: "GET" });
-  results.voicevox = voicevoxRes.ok || await window.electronAPI.waitVoicevox();
-
-  if (!results.ollama && !results.voicevox) {
+// アプリが起動した音声エンジンの準備が終わった（ok：応答した。false：起動できなかった・時間内に応答しなかった）
+function onVoicevoxSettled(ok) {
+  if (!ok) {
+    setVoiceState("unavailable");
+    pendingGreetingVoice = null;
     addMessage(
-      "⚠️ OllamaとVOICEVOXが両方起動していないみたい…\n" +
-      `①Ollamaを起動して「ollama run ${currentModel}」を実行\n` +
-      "②VOICEVOXがインストールされているか確かめてから、もう一度アプリを開いてね",
+      "⚠️ VOICEVOXが起動できなかったみたい…声が出せないよ\n" +
+      "VOICEVOXがインストールされているか確かめてから、もう一度アプリを開いてね",
       "ai"
     );
-  } else if (!results.ollama) {
+    return;
+  }
+  setVoiceState("ready");
+  // あいさつを文字だけで出したあと、まだ何も送っていなければ、声で読む
+  const greeting = pendingGreetingVoice;
+  pendingGreetingVoice = null;
+  if (greeting !== null && !isBusy && !isSpeaking && !sessionExpired) speakWithVOICEVOX(greeting);
+}
+
+async function checkConnections() {
+  const ollamaRes = await window.electronAPI.netOllama({ path: "/api/tags", method: "GET" });
+  const currentModel = getOllamaModel();
+
+  if (!ollamaRes.ok) {
     addMessage(
       "⚠️ Ollamaが起動していないみたい…\n" +
       `「ollama run ${currentModel}」を実行してからもう一度試してね`,
       "ai"
     );
-  } else {
-    // Ollama は動いている。モデルがないときと、VOICEVOX が動かないときは、それぞれの知らせを出す
-    if (!results.model) showModelMissingMessage();
-    if (!results.voicevox) {
-      addMessage(
-        "⚠️ VOICEVOXが起動できなかったみたい…声が出せないよ\n" +
-        "VOICEVOXがインストールされているか確かめてから、もう一度アプリを開いてね",
-        "ai"
-      );
-    }
+  } else if (!TumugiOllama.hasModel(ollamaRes.data, currentModel)) {
+    // Ollama が動いていれば、使うモデルが入っているかも、同じ一覧で確かめる（名前の比べ方は js/ollama.js の hasModel）
+    showModelMissingMessage();
   }
 
-  return results;
+  // VOICEVOX の音声エンジンはアプリ（main.js）が起動する。答えないときは、起動の途中かもしれないので、待たずに先へ進む。
+  // waitVoicevox は、アプリが起動した音声エンジンの準備が終わったときに答える（もう終わっていればすぐ。アプリが起動していないとき＝入っていないときなどは、すぐ false）
+  const voicevoxRes = await window.electronAPI.netVoicevox({ path: "/version", method: "GET" });
+  if (voicevoxRes.ok) {
+    setVoiceState("ready");
+    return;
+  }
+  setVoiceState("starting");
+  window.electronAPI.waitVoicevox()
+    .catch(() => false)
+    .then((ok) => onVoicevoxSettled(ok === true));
 }
 
 // =========================
