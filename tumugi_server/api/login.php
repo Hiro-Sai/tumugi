@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/login_guard.php';
-setCorsHeaders();
+require_once __DIR__ . '/../includes/aggregate_rules.php';
+startApi();
 
 define('TOKEN_TTL_HOURS', 24); // ログインのトークンが有効な時間
 
@@ -27,6 +28,9 @@ if ($employeeCode === '' || $password === '') {
 // =========================================
 $pdo = getDbConnection();
 
+// 1日より前のログインの記録を、全員分消す（ログインのたびに掃除する。ロック中で 429 を返すときも）
+deleteOldAttempts($pdo);
+
 if (countRecentFailures($pdo, $employeeCode) >= MAX_FAILED_ATTEMPTS) {
     http_response_code(429);
     echo json_encode([
@@ -43,8 +47,9 @@ $stmt = $pdo->prepare(
 $stmt->execute(['code' => $employeeCode]);
 $employee = $stmt->fetch();
 
-// 社員IDの存在有無に関わらず同じエラーメッセージにする（IDの存在を推測されないため）
-if (!$employee || !password_verify($password, $employee['password_hash'])) {
+// 社員IDがないとき（退職も含む）も、パスワードを確かめるのと同じ重さの計算をしてから断り（checkPassword）、
+// エラーの文も同じにする。どちらも、社員IDがあるかどうかを推測されないため
+if (!checkPassword($password, $employee ? $employee['password_hash'] : null)) {
     recordAttempt($pdo, $employeeCode, false);
     http_response_code(401);
     echo json_encode(['error' => '社員IDまたはパスワードが正しくありません']);
@@ -52,9 +57,17 @@ if (!$employee || !password_verify($password, $employee['password_hash'])) {
 }
 
 recordAttempt($pdo, $employeeCode, true);
+// 正しいパスワードで入れたので、この社員IDの失敗の数を0に戻す
+clearFailures($pdo, $employeeCode);
 
 // 期限の切れたトークンを、全員分消す（ログインのたびに掃除する）
 $pdo->exec("DELETE FROM auth_tokens WHERE expires_at <= NOW()");
+
+// EMOTION_LOG_RETENTION_DAYS 日より前の感情ログを、全員分消す（ログインに成功するたびに掃除する）。
+// 失敗や 429 のときは消さない。ログインできない人の要求のたびに、感情ログの表を全部読ませないため。
+// EMOTION_LOG_RETENTION_DAYSは定数（ユーザー入力ではない）のためSQLに直接埋め込んでも安全
+$retentionDays = (int) EMOTION_LOG_RETENTION_DAYS;
+$pdo->exec("DELETE FROM emotion_logs WHERE recorded_at < (NOW() - INTERVAL {$retentionDays} DAY)");
 
 // トークン発行（TOKEN_TTL_HOURS 時間有効）。DB にはトークンそのものではなく、そのハッシュを入れる。
 // 期限は MySQL の時計で計算する。

@@ -30,6 +30,20 @@ function readAuth(code) {
   return fixture([{ op: "read_auth", code }])[0];
 }
 
+// ログインに失敗（401）するまでの時間（ミリ秒）
+async function timeFailedLogin(code, pw) {
+  const start = performance.now();
+  const res = await login(code, pw);
+  const ms = performance.now() - start;
+  assert.equal(res.status, 401);
+  return ms;
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
 // ---------- 5.2 ログイン ----------
 
 test("正しい社員IDとパスワードで 200。必要な項目が返る", async () => {
@@ -77,6 +91,31 @@ test("いない社員IDでも 401。エラーの文は、パスワードが違�
   assert.equal(unknown.status, 401);
   assert.equal(typeof unknown.json.error, "string");
   assert.equal(unknown.json.error, wrongPw.json.error);
+});
+
+test("いない社員IDと退職した社員でも、断るまでの時間は、パスワードを間違えたときと同じくらい", async () => {
+  // パスワードの確かめ（bcrypt）を飛ばすと、0.2秒ほど早く返り、社員IDがあるかどうかが分かってしまう
+  addEmployee("E001");
+  addEmployee("E002", { is_active: false });
+  // はじめの1回は遅いことがあるので、数えない
+  await login("E900", randomValue());
+  const wrongPassword = [];
+  const unknownCode = [];
+  const retired = [];
+  // 同じ社員IDは3回まで（5回でロックされると、確かめずに 429 を返すため）
+  for (let i = 0; i < 3; i += 1) {
+    wrongPassword.push(await timeFailedLogin("E001", randomValue()));
+    unknownCode.push(await timeFailedLogin(`E99${i}`, randomValue()));
+    retired.push(await timeFailedLogin("E002", randomValue()));
+  }
+  const base = median(wrongPassword);
+  for (const [name, values] of [["いない社員ID", unknownCode], ["退職した社員", retired]]) {
+    const ms = median(values);
+    assert.ok(
+      ms > base * 0.5 && ms < base * 2,
+      `${name}：${ms.toFixed(0)}ms（パスワードを間違えたとき：${base.toFixed(0)}ms）`,
+    );
+  }
 });
 
 test("社員IDが空だと 400（パスワードは正しく送る）", async () => {
@@ -158,6 +197,21 @@ test("成功した回は、失敗の数に入らない", async () => {
   assert.equal(res.status, 200);
 });
 
+test("成功すると、その社員IDの失敗の数が0に戻る（ほかの社員IDの分は残る）", async () => {
+  const pw = addEmployee("E001");
+  fixture([
+    { op: "add_attempts", code: "E001", count: 4, succeeded: false, minutes_ago: 1 },
+    { op: "add_attempts", code: "E002", count: 3, succeeded: false, minutes_ago: 1 },
+  ]);
+  const res = await login("E001", pw);
+  assert.equal(res.status, 200);
+  assert.deepEqual(readAuth("E001"), { tokens: 1, failed_attempts: 0, succeeded_attempts: 1 });
+  assert.equal(readAuth("E002").failed_attempts, 3);
+  // 1回打ち間違えても、ロックされない（前の4回が残っていたら、合わせて5回になり、次は 429）
+  assert.equal((await login("E001", randomValue())).status, 401);
+  assert.equal((await login("E001", pw)).status, 200);
+});
+
 test("社員IDは、大文字・小文字が違っても、前後に空白があってもログインできる", async () => {
   const pw = addEmployee("E001");
   const [row] = fixture([{ op: "read_employee", code: "E001" }]);
@@ -183,6 +237,50 @@ test("ログインすると、期限の切れたトークンが（ほかの社�
   assert.equal(readAuth(first.code).tokens, 0);
   assert.equal(readAuth(third.code).tokens, 1);
   assert.equal(readAuth(second.code).tokens, 1);
+});
+
+test("ログインのたびに、1日より前のログインの記録が（ほかの社員IDの分も）消える。1日以内の分は残る", async () => {
+  fixture([
+    // 1日と1分前の記録：消える（失敗も成功も）
+    { op: "add_attempts", code: "E001", count: 2, succeeded: false, minutes_ago: 24 * 60 + 1 },
+    { op: "add_attempts", code: "E001", count: 1, succeeded: true, minutes_ago: 24 * 60 + 1 },
+    // 1日の1分前までの記録：残る
+    { op: "add_attempts", code: "E002", count: 2, succeeded: false, minutes_ago: 24 * 60 - 1 },
+    { op: "add_attempts", code: "E002", count: 1, succeeded: true, minutes_ago: 24 * 60 - 1 },
+    // ログインを試す社員ID。5回間違えていて、ロックされている
+    { op: "add_attempts", code: "E003", count: 5, succeeded: false, minutes_ago: 1 },
+  ]);
+  // ロックされて 429 を返すときも、掃除はする
+  assert.equal((await login("E003", randomValue())).status, 429);
+  assert.deepEqual(readAuth("E001"), { tokens: 0, failed_attempts: 0, succeeded_attempts: 0 });
+  assert.deepEqual(readAuth("E002"), { tokens: 0, failed_attempts: 2, succeeded_attempts: 1 });
+  assert.equal(readAuth("E003").failed_attempts, 5);
+});
+
+test("ログインに成功すると、14日より前の感情ログが（ほかの社員の分も）消える。14日以内の分は残る", async () => {
+  const pw = addEmployee("E001");
+  addEmployee("E002");
+  fixture([
+    // 15日前の記録は消え、13日前の記録は残る
+    { op: "add_logs", code: "E001", logs: [{ emotion: "tired", days_ago: 15 }, { emotion: "sad", days_ago: 13 }] },
+    // ログインしていない社員の、15日前の記録も消える
+    { op: "add_logs", code: "E002", logs: [{ emotion: "tired", days_ago: 15 }] },
+  ]);
+  const readLogs = () => fixture([
+    { op: "read_logs", code: "E001" },
+    { op: "read_logs", code: "E002" },
+  ]);
+
+  // ログインに失敗したとき（401）は、消さない
+  assert.equal((await login("E001", randomValue())).status, 401);
+  let [mine, other] = readLogs();
+  assert.equal(mine.length, 2);
+  assert.equal(other.length, 1);
+
+  assert.equal((await login("E001", pw)).status, 200);
+  [mine, other] = readLogs();
+  assert.deepEqual(mine.map((log) => log.emotion), ["sad"]);
+  assert.equal(other.length, 0);
 });
 
 // ---------- 5.3 ログアウト ----------

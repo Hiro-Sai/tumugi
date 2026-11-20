@@ -38,19 +38,31 @@ function getDbConnection(): PDO {
 }
 
 // -----------------------------------------
-// CORS設定（Electronアプリからのfetchを許可）
-// 本番運用時は許可オリジンを絞ること
+// API の入り口。すべての API が、最初に呼ぶ。
+// - 応答は JSON で返す。
+// - CORS の許し（Access-Control-Allow-*）は返さない。OPTIONS（ブラウザの事前の確かめ）にも答えない。
+//   アプリは main プロセスから送るので、CORS は要らない（画面は CSP の connect-src 'none' で、直接は送らない）。
+//   許すと、同じ PC のブラウザで開いたほかのウェブページが、API を呼んで結果まで読めてしまう。
+// - POST は、Content-Type が application/json のものだけを受け付け、ほかは DB に触れる前に 415 で断る。
+//   ブラウザは、text/plain・フォームの形・Content-Type なしなら、サーバーの許しがなくても、ほかのページから送れる。
+//   断らないと、ほかのページからログインを試して、他人の社員IDをロックさせられる。
+//   アプリは、いつも application/json を付けて送る（main.js の net:serverRequest）。
+// （レビューの B2。2026-11-20 に、CORS の設定を消して、この形にした）
 // -----------------------------------------
-function setCorsHeaders(): void {
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization');
+function startApi(): void {
     header('Content-Type: application/json; charset=utf-8');
 
-    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-        http_response_code(204);
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isJsonContentType($_SERVER['CONTENT_TYPE'] ?? '')) {
+        http_response_code(415);
+        echo json_encode(['error' => 'Content-Type は application/json にしてください']);
         exit;
     }
+}
+
+// Content-Type が application/json か。「;」から先（charset など）と、大文字・小文字の違いは見ない
+function isJsonContentType(string $contentType): bool {
+    $mediaType = strtolower(trim(explode(';', $contentType, 2)[0]));
+    return $mediaType === 'application/json';
 }
 
 // -----------------------------------------

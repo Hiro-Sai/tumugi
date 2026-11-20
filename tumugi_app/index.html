@@ -85,18 +85,21 @@
           <span class="starters-label">話題の例：</span>
           <!-- 話題の例のボタンは、JS が作る -->
         </div>
+        <!-- 入力欄は複数行（Enter で送信、Shift+Enter で改行）。高さは書いた量に合わせて5行まで伸びる（script.js の fitTextInputHeight） -->
         <div class="compose-row">
-          <input
-            type="text"
+          <textarea
             id="textInput"
             class="compose-input"
+            rows="1"
             placeholder="メッセージを入力"
             aria-label="つむぎへのメッセージ"
+            aria-describedby="inputCount"
             autocomplete="off"
-          >
+          ></textarea>
           <button id="sendBtn" class="btn" type="button">送信</button>
         </div>
-        <p class="hint">Enter キーでも送信できます。</p>
+        <!-- 文字数は、残りが200文字を切ってから出す。1000文字を超えたら、減らす数を出して送信を止める（script.js の updateInputLimit） -->
+        <p class="hint compose-foot"><span>Enter で送信、Shift+Enter で改行</span><span id="inputCount" class="input-count" aria-live="polite"></span></p>
       </div>
     </main>
 
@@ -115,6 +118,8 @@
       <div id="memoryList" class="memory-list">
         <!-- JS で生成 -->
       </div>
+      <!-- 30項目いっぱいのときだけ出す（script.js の renderMemoryList。上限は js/memory-rules.js の MAX_ITEMS） -->
+      <p id="memoryFullNote" class="hint memory-full" hidden>記憶は30項目までです。いっぱいのあいだは、新しいことを覚えません。いらない項目を削除すると、また覚えます。</p>
       <div class="row-actions">
         <button id="memoryResetBtn" class="btn danger small" type="button">すべて削除</button>
         <!-- 「すべて削除」の確認。confirm() は使わない（Windows の Electron では、閉じたあと入力欄に文字が入らなくなるため） -->
@@ -241,7 +246,7 @@
           </ul>
         </div>
       </div>
-      <p>「送信する」を選んだ場合、記録は、あなたの社員IDと紐づけて社内サーバーに保存されます。管理者が閲覧できるのは、10名以上のグループ単位の集計値のみで、個人ごとの記録は閲覧できません。管理者が所属（部署など）を変更したときは、次のログイン時にお知らせします。変更の履歴は「設定」で確認できます。</p>
+      <p>「送信する」を選んだ場合、記録は、あなたの社員IDと紐づけて社内サーバーに保存され、14日を過ぎると消えます。管理者の画面に出るのは、10名以上のグループ単位の集計値のみで、個人ごとの記録は出ません。ただし、サーバーを管理する担当者は、保存された記録を社員IDごとに見ることができます。管理者が所属（部署など）を変更したときは、次のログイン時にお知らせします。変更の履歴は「設定」で確認できます。</p>
       <p class="hint">どちらを選択しても、チャット機能は通常どおり利用できます。危機的な発言を検知した場合は、選択にかかわらず、その場で相談窓口を案内します（この案内はこのPC内の動作で、サーバーへの送信とは別のものです）。この設定は、後から「設定」画面でいつでも変更できます。</p>
       <div class="choice">
         <button id="noticeDeclineBtn" class="btn quiet" type="button">送信しない</button>
@@ -259,22 +264,23 @@
            p ではなく div にしているのは、隠しているときに、下の段落の間隔（.dialog p + p）を変えないため -->
       <div id="setupLost" class="setup-lost" hidden>前の記憶を読めなかったので、もう一度教えてください。パスワードが変わると（管理者が仮のパスワードを発行したときや、ほかの PC で変えたとき）、それまでの記憶は読めなくなります。</div>
       <p>入力した内容は、つむぎとの会話に使われます。このPC内にのみ保存され、会社には送信されません。入力は任意です。</p>
+      <!-- どの欄も、記憶の1項目の上限（100文字。js/memory-rules.js の MAX_VALUE_CHARS）まで -->
       <div class="stack setup-fields">
         <div class="field">
           <label for="setupName">呼び名</label>
-          <input type="text" id="setupName" placeholder="たろう" autocomplete="off">
+          <input type="text" id="setupName" placeholder="たろう" autocomplete="off" maxlength="100">
         </div>
         <div class="field">
           <label for="setupAge">年齢</label>
-          <input type="text" id="setupAge" placeholder="22" autocomplete="off">
+          <input type="text" id="setupAge" placeholder="22" autocomplete="off" maxlength="100">
         </div>
         <div class="field">
           <label for="setupHobby">趣味</label>
-          <input type="text" id="setupHobby" placeholder="音楽、映画…" autocomplete="off">
+          <input type="text" id="setupHobby" placeholder="音楽、映画…" autocomplete="off" maxlength="100">
         </div>
         <div class="field">
           <label for="setupMood">最近の気分</label>
-          <input type="text" id="setupMood" placeholder="ちょっと疲れ気味…" autocomplete="off">
+          <input type="text" id="setupMood" placeholder="ちょっと疲れ気味…" autocomplete="off" maxlength="100">
         </div>
       </div>
       <div class="choice">
@@ -284,7 +290,8 @@
     </div>
   </div>
 
-  <!-- utils.js → auth.js → safety.js → prompt.js → ollama.js → conversation.js → password.js → lipsync.js → chat-view.js → script.js の順で読み込む
+  <!-- utils.js → auth.js → safety.js → prompt.js → ollama.js → conversation.js → password.js → lipsync.js → chat-view.js
+       → notice-view.js → memory-rules.js → script.js の順で読み込む
        （conversation.js は読み込み時に TumugiPrompt を使うので、prompt.js より後に置く。script.js は最後） -->
   <script src="js/utils.js"></script>
   <script src="js/auth.js"></script>
@@ -296,6 +303,7 @@
   <script src="js/lipsync.js"></script>
   <script src="js/chat-view.js"></script>
   <script src="js/notice-view.js"></script>
+  <script src="js/memory-rules.js"></script>
   <script src="js/script.js"></script>
 </body>
 </html>

@@ -15,7 +15,7 @@
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/aggregate_rules.php';
-setCorsHeaders();
+startApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);

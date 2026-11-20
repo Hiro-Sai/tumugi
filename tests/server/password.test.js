@@ -67,6 +67,18 @@ test("今のパスワードが違うと 403。失敗が1回数えられ、パス
   assert.equal((await login(pw)).status, 200);
 });
 
+test("今のパスワードが合えば、間違えた数が0に戻る（新しいパスワードが短くて 400 のときも）", async () => {
+  const { pw, token } = await setupEmployee();
+  for (let i = 0; i < 2; i += 1) {
+    assert.equal((await change(token, randomValue(), randomValue())).status, 403);
+  }
+  assert.equal(readAuth().failed_attempts, 2);
+  // 今のパスワードは合っている。新しいパスワードが8文字未満なので、パスワードは変わらない
+  const res = await change(token, pw, randomValue(7));
+  assert.equal(res.status, 400);
+  assert.equal(readAuth().failed_attempts, 0);
+});
+
 test("新しいパスワードが8文字未満だと 400（今のパスワードは正しく送る）", async () => {
   const { pw, token } = await setupEmployee();
   const short = randomValue(7);

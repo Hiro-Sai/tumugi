@@ -18,7 +18,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
 require_once __DIR__ . '/../includes/employee_admin.php';
-setCorsHeaders();
+startApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     respondError(405, 'GETメソッドのみ許可されています');

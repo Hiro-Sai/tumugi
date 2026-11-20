@@ -109,7 +109,7 @@ body.page-chat {
   color: var(--ink);
 }
 /* :where で強さを下げる（.btn や .link の色・太さに勝たないように） */
-:where(.page-chat .layout) button, :where(.page-chat .layout) input { font: inherit; color: inherit; }
+:where(.page-chat .layout) button, :where(.page-chat .layout) input, :where(.page-chat .layout) textarea { font: inherit; color: inherit; }
 :where(.page-chat .layout h1, .page-chat .layout h2) { line-height: 1.5; font-weight: 700; font-family: var(--font); color: var(--ink); text-transform: none; }
 
 /* 左の欄。地に、紬（つむぎ）の織り目のような、ごく薄い格子を入れる（格子は決めた例外） */
@@ -167,6 +167,8 @@ body.page-chat {
 .msg .bubble { padding: 10px 16px; border-radius: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.tumugi .bubble { background: var(--surface); border: 1px solid var(--line); border-top-left-radius: 4px; }
 .msg.tumugi .bubble.voicevox-warn { border-color: var(--alert); }
+/* 吹き出しは、どちらも文の長さに合わせる（上の max-width まで）。指定しないと、横いっぱいに伸びて、短い文の右が空く */
+.msg.tumugi { align-self: flex-start; }
 .msg.me { align-self: flex-end; }
 .msg.me .who { text-align: right; }
 .msg.me .bubble { background: var(--blue); color: var(--surface); border-top-right-radius: 4px; }
@@ -179,13 +181,20 @@ body.page-chat {
 .starters button:hover { background: var(--blue-pale); }
 /* 入力できないあいだ：薄くするが、文字は読める色にする */
 .starters button:disabled, .starters button:disabled:hover { color: var(--ink-sub); background: var(--ground); border-color: var(--line); cursor: default; }
-.compose-row { display: flex; gap: 10px; }
-.compose-input { flex: 1; min-width: 0; min-height: 48px; padding: 10px 14px; color: var(--ink); background: var(--surface); border: 1.5px solid var(--edge); border-radius: var(--radius); }
+/* 入力欄が伸びても、送信ボタンは下の端にそろえる */
+.compose-row { display: flex; gap: 10px; align-items: flex-end; }
+/* 入力欄は複数行。高さは script.js が書いた量に合わせ、5行（行の高さ 1.8em × 5 ＋ 上下の余白 20px ＋ 枠 3px）までにする */
+.compose-input { flex: 1; min-width: 0; min-height: 48px; max-height: calc(1.8em * 5 + 23px); padding: 10px 14px; color: var(--ink); background: var(--surface); border: 1.5px solid var(--edge); border-radius: var(--radius); resize: none; overflow-y: auto; }
 .compose-input::placeholder { color: var(--ink-sub); }
 .compose-input:disabled { color: var(--ink-sub); background: var(--ground); border-color: var(--line); cursor: not-allowed; }
-.compose-row .btn { flex: none; min-width: 88px; }
+/* 送信ボタンの高さは、入力欄が1行のとき（行 1.8em ＋ 余白 20px ＋ 枠 3px）にそろえる */
+.compose-row .btn { flex: none; min-width: 88px; min-height: calc(1.8em + 23px); }
 .compose .btn:disabled { cursor: not-allowed; }
 .compose .hint { margin-top: 4px; }
+/* 下の説明と、文字数の表示（右）。文字数は、上限を超えたら赤で出す。
+   印の名前に over は使わない（.over は、窓の後ろに敷く覆い。付けると画面全体が覆われ、クリックできなくなる） */
+.compose-foot { display: flex; justify-content: space-between; gap: 12px; }
+.input-count.too-long { color: var(--alert); font-weight: 700; }
 /* ログインの期限が切れたときの知らせ。入力の所の代わりに出す（お知らせと同じく、左に青い線）。
    .session-expired[hidden] は、display を指定しても隠れるようにするため */
 .session-expired { padding: 2px 0 2px 14px; border-left: 4px solid var(--blue); }
@@ -251,6 +260,8 @@ body {
 
 /* 記憶（行は script.js が作る） */
 .page-chat .memory-list { max-height: 45vh; margin-top: 8px; overflow-y: auto; }
+/* 30項目いっぱいのときの知らせ（一覧の下） */
+.page-chat .memory-full { margin-top: 8px; }
 .page-chat .memory-empty { padding: 20px 0; text-align: center; color: var(--ink-sub); }
 .page-chat .memory-item { display: grid; grid-template-columns: 7em minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .page-chat .memory-item:last-child { border-bottom: 0; }

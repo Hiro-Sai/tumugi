@@ -10,7 +10,7 @@
 // - 消す行がなくても（期限切れ・すでに消えている・退職者）200 を返す。
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
-setCorsHeaders();
+startApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);

@@ -17,7 +17,7 @@ require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
 require_once __DIR__ . '/../includes/employee_admin.php';
 require_once __DIR__ . '/../includes/aggregate_rules.php';
-setCorsHeaders();
+startApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     respondError(405, 'POSTメソッドのみ許可されています');

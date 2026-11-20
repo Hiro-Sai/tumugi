@@ -6,13 +6,13 @@
 // 成功したら 200 で {"status":"ok","revoked":<消したほかのトークンの数>} を返す。
 //
 // - 今のパスワードが違うときは 403 にする。401 にすると、アプリは「ログインが切れた」と見なしてログアウトする。
-// - 試せる回数は、ログインと共通（includes/login_guard.php）。
+// - 試せる回数は、ログインと共通（includes/login_guard.php）。今のパスワードが合ったら、間違えた数を0に戻す。
 // - 今のパスワードを、新しいパスワードの決まりより先に確かめる。間違えた回数を必ず数えるため。
 // - 新しいパスワードの決まりは、アプリ（tumugi_app/js/password.js）と同じにすること。
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/login_guard.php';
-setCorsHeaders();
+startApi();
 
 define('MIN_PASSWORD_CHARS', 8);
 define('MAX_PASSWORD_BYTES', 72); // bcrypt は72バイトを超えた分を無視するため
@@ -66,6 +66,9 @@ if (!password_verify($currentPassword, $employee['password_hash'])) {
     echo json_encode(['error' => '現在のパスワードが正しくありません']);
     exit;
 }
+
+// 今のパスワードが合ったので、失敗の数を0に戻す（新しいパスワードが決まりに合わず、このあと 400 になるときも）
+clearFailures($pdo, $employeeCode);
 
 // 文字数は、全角や絵文字も1文字と数える（strlen はバイト数なので、全角3文字で8になってしまう）
 if (mb_strlen($newPassword, 'UTF-8') < MIN_PASSWORD_CHARS) {

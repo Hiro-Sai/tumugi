@@ -9,6 +9,7 @@ const assert = require("node:assert/strict");
 
 const {
   formatTime, formatHeaderDate, dayKey, dayLabel, needsDaySeparator, statusText, STARTERS,
+  MAX_INPUT_CHARS, inputLength, isInputTooLong, inputCountText,
 } = require("../js/chat-view");
 
 // new Date(年, 月, 日, 時, 分)。月は 1 から数える
@@ -78,4 +79,41 @@ test("STARTERS: 4つあり、label と text が空でなく、書き換えられ
   assert.ok(Object.isFrozen(STARTERS));
   assert.deepEqual(STARTERS.map(s => s.label), ["今日の出来事", "仕事の悩み", "人間関係", "雑談したい"]);
   assert.throws(() => { "use strict"; STARTERS.push({ label: "x", text: "y" }); }, TypeError);
+});
+
+// -----------------------------------------
+// 入力の文字数（つむぎへの1回の発言は1000文字まで）
+// -----------------------------------------
+test("inputLength: 送るときと同じく前後の空白を除き、絵文字も1文字と数える", () => {
+  assert.equal(inputLength("こんにちは"), 5);
+  assert.equal(inputLength("  こんにちは\n"), 5);
+  assert.equal(inputLength("　こんにちは　"), 5); // 全角の空白
+  assert.equal(inputLength("一行目\n二行目"), 7); // 間の改行は1文字
+  assert.equal(inputLength("😊"), 1);              // "😊".length は 2
+  assert.equal(inputLength(""), 0);
+  assert.equal(inputLength(undefined), 0);
+});
+
+test("isInputTooLong: 1000文字までは送れて、1001文字からは送れない", () => {
+  assert.equal(MAX_INPUT_CHARS, 1000);
+  assert.equal(isInputTooLong("あ".repeat(1000)), false);
+  assert.equal(isInputTooLong("あ".repeat(1001)), true);
+  assert.equal(isInputTooLong("あ".repeat(1000) + "  \n"), false); // 後ろの空白は数えない
+  assert.equal(isInputTooLong("😊".repeat(1000)), false);          // JavaScript の長さでは 2000
+});
+
+test("inputCountText: 残りが200文字を切るまでは、何も出さない", () => {
+  assert.equal(inputCountText(""), "");
+  assert.equal(inputCountText("今日あったことを聞いてほしい。"), "");
+  assert.equal(inputCountText("あ".repeat(800)), ""); // 残り200文字
+});
+
+test("inputCountText: 残りが200文字を切ったら、残りの文字数を出す", () => {
+  assert.equal(inputCountText("あ".repeat(801)), "残り199文字");
+  assert.equal(inputCountText("あ".repeat(1000)), "残り0文字");
+});
+
+test("inputCountText: 上限を超えたら、上限と、減らす文字数を出す", () => {
+  assert.equal(inputCountText("あ".repeat(1001)), "1000文字までです（あと1文字減らしてください）");
+  assert.equal(inputCountText("あ".repeat(1030)), "1000文字までです（あと30文字減らしてください）");
 });

@@ -20,15 +20,16 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 const ALPHANUMERIC = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 // API を呼ぶ。→ { status, json }（JSON でない本文は json: null）
-// body はオブジェクトなら JSON にして送る。文字列ならそのまま送る
+// body はオブジェクトなら JSON にして送る。文字列ならそのまま送る。
+// Content-Type は、アプリ（main.js の net:serverRequest）と同じく、本文がなくても、いつも application/json を付ける
+// （サーバーは、JSON でない POST を 415 で断るため。Content-Type を変えて送るテストは cors.test.js）
 async function api(method, apiPath, { body, token } = {}) {
-  const headers = {};
+  const headers = { "Content-Type": "application/json" };
   if (token !== undefined && token !== null) {
     headers.Authorization = `Bearer ${token}`;
   }
   const init = { method, headers };
   if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
     init.body = typeof body === "string" ? body : JSON.stringify(body);
   }
   const res = await fetch(BASE_URL + apiPath, init);

@@ -1,6 +1,6 @@
 // =========================================
 // js/chat-view.js
-// チャットの画面に出す、時刻・日付・状態の文・話題の例。画面には触らない（文字や値を返すだけ）。
+// チャットの画面に出す、時刻・日付・状態の文・話題の例・入力の文字数。画面には触らない（文字や値を返すだけ）。
 // 画面（index.html から script.js より先に読み込む）と、単体テスト（test/chat-view.test.js）の両方から使う。
 // 日付と時刻は、その PC の時刻（ローカル）で扱う。
 // =========================================
@@ -58,8 +58,36 @@
     Object.freeze({ label: "雑談したい", text: "少し雑談に付き合ってほしいな。" }),
   ]);
 
+  // つむぎへの1回の発言の上限（文字）。Gemma 4 では、日本語1文字が約0.53語なので、1000文字は約530語。
+  // 会話が長くなって要約の直前（最大で約6000語）でも、num_ctx（8192）に収まる。
+  // 上限がないと、とても長い文を送ったときに、Ollama が、つむぎへの指示まで黙って削ってしまう
+  // （2026-11-20 に確かめた。2万文字の発言で、指示が消えた。レビューの A2）
+  const MAX_INPUT_CHARS = 1000;
+  // 残りの文字数を出し始める残りの数（短い発言のときに、数字が目に入らないように）
+  const INPUT_COUNT_FROM_REST = 200;
+
+  // 発言の文字数。送るときと同じく前後の空白を除き、文字（コードポイント）で数える（絵文字も1文字）
+  function inputLength(text) {
+    if (typeof text !== "string") return 0;
+    return [...text.trim()].length;
+  }
+
+  // 上限を超えているか（超えているあいだは送れない）
+  function isInputTooLong(text) {
+    return inputLength(text) > MAX_INPUT_CHARS;
+  }
+
+  // 入力欄の下に出す文字数の文。残りが INPUT_COUNT_FROM_REST 以上あるあいだは空
+  function inputCountText(text) {
+    const rest = MAX_INPUT_CHARS - inputLength(text);
+    if (rest < 0) return `${MAX_INPUT_CHARS}文字までです（あと${-rest}文字減らしてください）`;
+    if (rest < INPUT_COUNT_FROM_REST) return `残り${rest}文字`;
+    return "";
+  }
+
   const api = Object.freeze({
     formatTime, formatHeaderDate, dayKey, dayLabel, needsDaySeparator, statusText, STARTERS,
+    MAX_INPUT_CHARS, inputLength, isInputTooLong, inputCountText,
   });
 
   // テスト（Node）では module.exports、画面では window.TumugiChatView として使う

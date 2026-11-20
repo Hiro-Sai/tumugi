@@ -7,7 +7,7 @@
 // の両方から読み込む。
 //
 // コマンド（CLI）からも読み込まれるので、読み込んだだけでは何も出力せず、
-// setCorsHeaders() も exit も呼ばない。応答を返して終わるのは respondError() と
+// startApi() も exit も呼ばない。応答を返して終わるのは respondError() と
 // rollBackAndRespondError() だけ（API から呼ぶ）。
 // 入力の確かめ（validateEmployeeFields）は、終わらずにエラーの文を返す。
 //

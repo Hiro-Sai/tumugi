@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/admin_guard.php';
 require_once __DIR__ . '/../includes/aggregate_rules.php';
-setCorsHeaders();
+startApi();
 
 // -----------------------------------------
 // 管理者権限チェック（includes/admin_guard.php）

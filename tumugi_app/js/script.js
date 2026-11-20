@@ -99,7 +99,8 @@ async function loadMemoryFromStore() {
   LEGACY_LOCAL_KEYS.forEach(key => localStorage.removeItem(key));
   try {
     const result = await window.electronAPI.memoryGet();
-    userMemory = result?.memory ?? {};
+    // 値の形だけそろえる（配列は「、」でつなぎ、数字は文字に、オブジェクトなどは捨てる）。数と長さは切らない（js/memory-rules.js）
+    userMemory = TumugiMemoryRules.cleanLoaded(result?.memory);
     hasSavedMemory = !!result?.exists;
     memoryLost = !!result?.lost;
   } catch (e) {
@@ -167,13 +168,17 @@ async function extractAndSaveMemory(exchanges) {
     if (firstBrace === -1 || lastBrace <= firstBrace) return;
 
     const extracted = JSON.parse(raw.slice(firstBrace, lastBrace + 1));
-    if (Object.keys(extracted).length === 0) return;
 
-    const newMemory = { ...currentMemory, ...extracted };
+    // 項目の数（30）・値の長さ（100文字）・値の形を守って足す。いっぱいのときは、今ある項目の上書きだけ
+    // （js/memory-rules.js の mergeExtracted。レビューの A12）
+    const { memory: newMemory, applied, skipped } = TumugiMemoryRules.mergeExtracted(currentMemory, extracted);
+    if (skipped > 0) console.log(`[Memory] ${skipped} 件は、使えない形か、記憶がいっぱいのため入れませんでした`);
+    if (Object.keys(applied).length === 0) return;
+
     saveMemory(newMemory);
-    // 保存した分は、次の返事の発言の後ろにも付ける（返事のシステムプロンプトは、会話の途中では変えない）
-    pendingFacts = { ...pendingFacts, ...extracted };
-    console.log(`[Memory] ${Object.keys(extracted).length} 件を更新しました`); // 中身は個人の情報なので出さない
+    // 入れた分は、次の返事の発言の後ろにも付ける（返事のシステムプロンプトは、会話の途中では変えない）
+    pendingFacts = { ...pendingFacts, ...applied };
+    console.log(`[Memory] ${Object.keys(applied).length} 件を更新しました`); // 中身は個人の情報なので出さない
   } catch (e) {
     console.warn("[Memory] 抽出失敗:", e.message);
   }
@@ -1145,17 +1150,51 @@ function showSessionExpiredNotice() {
 // ボタン状態制御
 // =========================
 function setButtonBusy(busy) {
-  const sendBtn   = document.getElementById("sendBtn");
   const textInput = document.getElementById("textInput");
   isBusy = busy;
   if (!busy) isReady = true; // 一度でも入力できるようになったら、準備は終わり
   // ログインの期限が切れたあとは、入力を戻さない
   const locked = busy || sessionExpired;
-  if (sendBtn)   sendBtn.disabled   = locked;
   if (textInput) textInput.disabled = locked;
   // 話題の例も、入力できないあいだは押せない
   document.querySelectorAll("#starters button").forEach((btn) => { btn.disabled = locked; });
+  // 送信ボタンは、入力が上限を超えているあいだも押せないので、updateInputLimit で決める
+  updateInputLimit();
   updateStatus();
+}
+
+// 入力欄の下の文字数の表示と、送信ボタンを押せるか（文と上限は js/chat-view.js）。
+// 入力が上限（1000文字）を超えているあいだは、送信ボタンを押せない。書いたものは消さない（レビューの A2）
+function updateInputLimit() {
+  const input   = document.getElementById("textInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const count   = document.getElementById("inputCount");
+  const value   = input?.value ?? "";
+  const tooLong = TumugiChatView.isInputTooLong(value);
+  if (count) {
+    count.textContent = TumugiChatView.inputCountText(value);
+    count.classList.toggle("too-long", tooLong); // "over" は窓の後ろの覆い（.over）の名前なので使わない
+  }
+  if (sendBtn) sendBtn.disabled = isBusy || sessionExpired || tooLong;
+}
+
+// 入力欄の高さを、書いた量に合わせる。5行より長いときは、欄の中でスクロールする（上限は css の max-height）。
+// 入力欄が伸びると会話の欄が縮むので、会話の欄がいちばん下（最新の発言）を出していたときは、下を出したままにする
+function fitTextInputHeight() {
+  const input = document.getElementById("textInput");
+  if (!input) return;
+  const atBottom = chatArea ? chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 4 : false;
+  input.style.height = "auto";
+  // scrollHeight は枠を含まないので、枠の分を足す（box-sizing: border-box のため）
+  const border = input.offsetHeight - input.clientHeight;
+  input.style.height = `${input.scrollHeight + border}px`;
+  if (atBottom) chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// 入力欄の中身が変わったとき（打った・貼った・消した・送った・話題の例を入れた）
+function onTextInputChange() {
+  fitTextInputHeight();
+  updateInputLimit();
 }
 
 // 左の欄の状態の表示（話を聞いています／考えています／話しています）。
@@ -1183,6 +1222,7 @@ function setupStarters() {
     btn.addEventListener("click", () => {
       if (isBusy || input.disabled) return;
       input.value = starter.text;
+      onTextInputChange(); // 前に長い文が入っていたときに、高さと文字数の表示を戻す
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
     });
@@ -1197,13 +1237,16 @@ async function sendTextInput() {
   const input = document.getElementById("textInput");
   if (!input) return;
   const text = input.value.trim();
-  if (!text || isSpeaking || sessionExpired) return;
+  // 上限を超えているあいだは送らない（Enter で送ろうとしたときも。理由は入力欄の下に出ている）
+  if (!text || isSpeaking || sessionExpired || TumugiChatView.isInputTooLong(text)) return;
   input.value = "";
+  onTextInputChange();
   await handleUserInput(text);
 }
 
+// Enter で送信、Shift+Enter で改行。日本語の変換を確定する Enter では送らない（念のため isComposing も見る）
 function onTextInputKeydown(event) {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     sendTextInput();
   }
@@ -1358,6 +1401,10 @@ function renderMemoryList() {
   const memory = loadMemory();
   const entries = Object.entries(memory);
 
+  // 30項目いっぱいのときは、新しいことを覚えないと知らせる（js/memory-rules.js）
+  const fullNote = document.getElementById("memoryFullNote");
+  if (fullNote) fullNote.hidden = !TumugiMemoryRules.isFull(memory);
+
   if (entries.length === 0) {
     list.innerHTML = '<p class="memory-empty">記憶している内容はありません</p>';
     return;
@@ -1378,6 +1425,7 @@ function renderMemoryList() {
     const value = memory[key] ?? "";
     item.querySelector(".memory-key").textContent = key;
     const input = item.querySelector(".memory-value-input");
+    input.maxLength = TumugiMemoryRules.MAX_VALUE_CHARS; // 本人が直すときも100文字まで（今ある長い値は、そのまま出す）
     input.value = value;
     input.setAttribute("aria-label", key);
     input.dataset.original = value;
@@ -2120,6 +2168,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(id)?.addEventListener("click", () => handler());
   }
   document.getElementById("textInput")?.addEventListener("keydown", onTextInputKeydown);
+  document.getElementById("textInput")?.addEventListener("input", onTextInputChange);
   // 「詳細」は、設定の窓（送信の状態と説明がある）を開く。設定ボタンと同じ関数
   document.getElementById("promiseDetailBtn")?.addEventListener("click", () => openPromptModal());
 

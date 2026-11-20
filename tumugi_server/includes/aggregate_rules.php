@@ -13,8 +13,13 @@
 // -----------------------------------------
 define('MIN_DEPT_SIZE', 10);
 
-// 集計に使う記録の日数（削除の条件にも使う）
+// 集計に使う記録の日数（社員の削除の条件にも使う）
 define('AGGREGATE_WINDOW_DAYS', 7);
+
+// 感情ログを残す日数。過ぎた記録は、ログインに成功するたびに、全員分消す（api/login.php）。
+// 集計に使う日数（AGGREGATE_WINDOW_DAYS）より長くすること。
+// 変えるときは、同意画面の文（tumugi_app/index.html の「14日を過ぎると消えます」）と README も合わせること。
+define('EMOTION_LOG_RETENTION_DAYS', 14);
 
 // 集計に入れ始める時刻（employees.counted_from）からこの日数がたつまで、その社員の記録は集計に入れない。
 // 入れるかは、記録した時点で決める（emotion_logs.is_counted。api/save_emotion.php）
