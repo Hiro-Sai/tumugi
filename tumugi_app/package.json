@@ -25,6 +25,7 @@
       "memory-crypto.js",
       "ollama-relay.js",
       "task-queue.js",
+      "ipc-guard.js",
       "index.html",
       "login.html",
       "admin-demo.html",

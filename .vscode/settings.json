@@ -1,0 +1,11 @@
+{
+  "files.eol": "\n",
+  "files.encoding": "utf8",
+  "[bat]": {
+    "files.eol": "\r\n"
+  },
+  "[powershell]": {
+    "files.eol": "\r\n",
+    "files.encoding": "utf8bom"
+  }
+}

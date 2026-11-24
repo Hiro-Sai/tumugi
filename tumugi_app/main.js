@@ -7,6 +7,7 @@ const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaMo
 const { newSalt, deriveMemoryKey, encryptMemory, reencryptMemory, openMemoryRecord } = require("./memory-crypto");
 const { STREAM_PIECE_CHANNEL, withRelayOptions, createLineSplitter } = require("./ollama-relay");
 const { createTaskQueue } = require("./task-queue");
+const { isAllowedStoreKey, isTrustedSender } = require("./ipc-guard");
 
 const store = new Store();
 // ストアの読み書きの順番待ち（下の「IPC: electron-store 操作」で説明）
@@ -117,6 +118,33 @@ function createWindow() {
 }
 
 // =========================================
+// IPC の入口（レビューの B3）
+// どの IPC も、送り主がアプリの中の画面（アプリのフォルダの HTML の、いちばん外の枠）のときだけ受け付ける
+// （確かめ方は ipc-guard.js）。IPC を足すときは、ipcMain.handle・ipcMain.on を直接呼ばず、
+// この handleIpc・onIpc で登録すること（test/ipc-guard.test.js が確かめる）。
+// 断ったとき：handle は例外にする（画面側の invoke は失敗し、Electron がこちらのログにも出す）。
+//             on は何もせず、ログにチャンネル名だけ出す。
+// =========================================
+function handleIpc(channel, listener) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedSender(event, __dirname)) {
+      throw new Error(`[ipc] アプリの画面ではない送り主からの IPC を断りました: ${channel}`);
+    }
+    return listener(event, ...args);
+  });
+}
+
+function onIpc(channel, listener) {
+  ipcMain.on(channel, (event, ...args) => {
+    if (!isTrustedSender(event, __dirname)) {
+      console.warn(`[ipc] アプリの画面ではない送り主からの IPC を断りました: ${channel}`);
+      return;
+    }
+    listener(event, ...args);
+  });
+}
+
+// =========================================
 // 管理者ダッシュボードのウィンドウ
 // チャットとは別のウィンドウで開く。同じウィンドウでページを移ると、チャットの画面が作り直されて会話が消えるため。
 // チャットとは独立したウィンドウにする（親子にもモーダルにもしない）。集計を見ながら、チャットも操作できる。
@@ -124,7 +152,7 @@ function createWindow() {
 // 閉じるのは「チャットに戻る」か ×。チャットを閉じたとき・ログアウトしたときも、一緒に閉じる。
 // ダッシュボードを見せてよいかは、dashboard_data.php が DB で確かめる（ここは開くだけ）。
 // =========================================
-ipcMain.on("admin:open", (event) => {
+onIpc("admin:open", (event) => {
   // チャットの画面から送られたときだけ開く
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
   if (adminWindow) {
@@ -248,21 +276,35 @@ async function unwrapValue(stored) {
   }
 }
 
-ipcMain.handle("store:get", (event, key) => storeTask(() => unwrapValue(store.get(key))));
+// 画面側が読み書きしてよいキーは、ipc-guard.js の STORE_KEYS だけ（レビューの B3）。
+// 社員ごとの記憶（memory_<社員ID>）などは、ここからは読み書きさせない（記憶は下の memory:* だけが扱う）。
+// ほかのキーは例外で断る。ログには、キーの名前を40文字まで出す（キーは秘密の値ではない）。
+function checkStoreKey(channel, key) {
+  if (isAllowedStoreKey(key)) return;
+  const shown = typeof key === "string" ? JSON.stringify(key.slice(0, 40)) : typeof key;
+  throw new Error(`[ipc] 保存の IPC で、許可していないキーを断りました: ${channel} ${shown}`);
+}
 
-ipcMain.handle("store:set", (event, key, value) =>
-  storeTask(async () => {
+handleIpc("store:get", (event, key) => {
+  checkStoreKey("store:get", key);
+  return storeTask(() => unwrapValue(store.get(key)));
+});
+
+handleIpc("store:set", (event, key, value) => {
+  checkStoreKey("store:set", key);
+  return storeTask(async () => {
     store.set(key, await wrapValue(value));
     return true;
-  })
-);
+  });
+});
 
-ipcMain.handle("store:delete", (event, key) =>
-  storeTask(() => {
+handleIpc("store:delete", (event, key) => {
+  checkStoreKey("store:delete", key);
+  return storeTask(() => {
     store.delete(key);
     return true;
-  })
-);
+  });
+});
 
 // =========================================
 // IPC: つむぎの記憶（社員ごとに、その人のパスワードから作った鍵で暗号化する。memory-crypto.js）
@@ -277,7 +319,7 @@ ipcMain.handle("store:delete", (event, key) =>
 // ふだん：{ storeKey, key, salt }。展示モード：{ exhibitMemory }（記憶はここにだけ置く。まだないときは null）
 let memorySession = null;
 
-ipcMain.handle("memory:unlock", async (event, employeeId, password) => {
+handleIpc("memory:unlock", async (event, employeeId, password) => {
   memorySession = null;
   // electron-store はキーの "." を入れ子として扱うため、社員IDは数字だけに限る
   if (!/^\d+$/.test(String(employeeId)) || typeof password !== "string" || password === "") return false;
@@ -298,7 +340,7 @@ ipcMain.handle("memory:unlock", async (event, employeeId, password) => {
 
 // 戻り値：{ exists: この社員の記憶が保存されているか, memory: 記憶, lost: 前の記憶を読めなかったか }
 // lost のときは、画面（js/script.js）が、「はじめに」の画面で、もう一度聞く理由を本人に知らせる
-ipcMain.handle("memory:get", () => {
+handleIpc("memory:get", () => {
   if (EXHIBIT_MODE) {
     const memory = memorySession?.exhibitMemory;
     return memory ? { exists: true, memory, lost: false } : { exists: false, memory: {}, lost: false };
@@ -320,7 +362,7 @@ ipcMain.handle("memory:get", () => {
   });
 });
 
-ipcMain.handle("memory:set", (event, memory) => {
+handleIpc("memory:set", (event, memory) => {
   if (memory === null || typeof memory !== "object" || Array.isArray(memory)) return false;
   if (EXHIBIT_MODE) {
     if (!memorySession) return false;
@@ -335,7 +377,7 @@ ipcMain.handle("memory:set", (event, memory) => {
   });
 });
 
-ipcMain.handle("memory:delete", () => {
+handleIpc("memory:delete", () => {
   if (EXHIBIT_MODE) {
     if (!memorySession) return false;
     memorySession.exhibitMemory = null;
@@ -351,7 +393,7 @@ ipcMain.handle("memory:delete", () => {
 
 // パスワードを変えたとき（サーバーでの変更が成功したあと）に、記憶の鍵を新しいパスワードのものに付け替える。
 // 保存済みの記憶は、新しい鍵で暗号化し直す。読めない記憶（壊れているなど）は、memory:get と同じく消す。
-ipcMain.handle("memory:rekey", async (event, newPassword) => {
+handleIpc("memory:rekey", async (event, newPassword) => {
   if (EXHIBIT_MODE) return true; // 展示モードでは鍵を作っていない
   if (!memorySession || typeof newPassword !== "string" || newPassword === "") return false;
 
@@ -382,17 +424,17 @@ ipcMain.handle("memory:rekey", async (event, newPassword) => {
 });
 
 // 展示モードか（画面側で、パスワードの変更欄を隠すのに使う）
-ipcMain.handle("app:isExhibit", () => EXHIBIT_MODE);
+handleIpc("app:isExhibit", () => EXHIBIT_MODE);
 
 // ログインしたばかりか。チャット画面がログイン時のあいさつを出すときに1回だけ使う
 // （チャット画面が読み込み直されても、あいさつを繰り返さないため）
 let greetingPending = false;
 
-ipcMain.on("auth:login-success", () => {
+onIpc("auth:login-success", () => {
   greetingPending = true;
   if (mainWindow) mainWindow.loadFile("index.html");
 });
-ipcMain.on("auth:logout", () => {
+onIpc("auth:logout", () => {
   // 次にログインする社員が、前の社員の鍵（展示モードでは記憶）を使えないようにする。
   // 順番待ちに入れて、ログアウトの前に届いた記憶の保存などを、前の社員の鍵で終えてから消す
   storeTask(() => {
@@ -405,7 +447,7 @@ ipcMain.on("auth:logout", () => {
   if (mainWindow) mainWindow.loadFile("login.html");
 });
 
-ipcMain.handle("greeting:consume", () => {
+handleIpc("greeting:consume", () => {
   const pending = greetingPending;
   greetingPending = false;
   return pending;
@@ -467,7 +509,7 @@ async function startVoicevoxIfNeeded() {
 
 // チャット画面が「VOICEVOX が起動していない」と案内する前に呼ぶ。
 // アプリがエンジンを起動している途中なら、準備ができるまで待つ
-ipcMain.handle("voicevox:wait", async () => (voicevoxStarting ? voicevoxStarting : false));
+handleIpc("voicevox:wait", async () => (voicevoxStarting ? voicevoxStarting : false));
 
 app.on("will-quit", () => {
   if (voicevoxProcess) voicevoxProcess.kill();
@@ -541,7 +583,7 @@ function rejectModel(model) {
 // =========================================
 // IPC: Ollama への中継
 // =========================================
-ipcMain.handle("net:ollamaRequest", async (event, { path: reqPath, method, body } = {}) => {
+handleIpc("net:ollamaRequest", async (event, { path: reqPath, method, body } = {}) => {
   const httpMethod = method || "GET";
   const url = buildRelayUrl("ollama", reqPath, httpMethod);
   if (!url) return rejectRelay("ollama", httpMethod, reqPath);
@@ -562,7 +604,7 @@ ipcMain.handle("net:ollamaRequest", async (event, { path: reqPath, method, body 
 // 会話の中身（body・かけら・全文）はログに出さない。
 const STREAM_REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-ipcMain.handle("net:ollamaStream", async (event, requestId, { path: reqPath, method, body } = {}) => {
+handleIpc("net:ollamaStream", async (event, requestId, { path: reqPath, method, body } = {}) => {
   const url = buildRelayUrl("ollama", reqPath, method);
   if (typeof requestId !== "string" || !STREAM_REQUEST_ID.test(requestId) || method !== "POST" || !url) {
     return rejectRelay("ollama", method, reqPath);
@@ -660,7 +702,7 @@ async function readOllamaStream(response, onPiece) {
 // =========================================
 // IPC: VOICEVOX への中継
 // =========================================
-ipcMain.handle("net:voicevoxRequest", async (event, { path: reqPath, method, body, responseType } = {}) => {
+handleIpc("net:voicevoxRequest", async (event, { path: reqPath, method, body, responseType } = {}) => {
   const httpMethod = method || "GET";
   const url = buildRelayUrl("voicevox", reqPath, httpMethod);
   if (!url) return rejectRelay("voicevox", httpMethod, reqPath);
@@ -675,7 +717,7 @@ ipcMain.handle("net:voicevoxRequest", async (event, { path: reqPath, method, bod
 // =========================================
 // IPC: API サーバーへの中継
 // =========================================
-ipcMain.handle("net:serverRequest", async (event, { path: reqPath, method, body, token } = {}) => {
+handleIpc("net:serverRequest", async (event, { path: reqPath, method, body, token } = {}) => {
   const httpMethod = method || "GET";
   const url = buildRelayUrl("server", reqPath, httpMethod);
   if (!url) return rejectRelay("server", httpMethod, reqPath);

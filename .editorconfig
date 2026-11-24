@@ -1,0 +1,18 @@
+# エディタの決まり（EditorConfig）。改行と文字コードを、.gitattributes と同じにそろえる（レビューの C2）。
+# 最後の改行やインデントは決めない（決めると、保存のたびに今あるファイルまで変わるため）。
+# VS Code は、拡張を入れないとこのファイルを読まないので、.vscode/settings.json にも同じ決まりを書いた。
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+
+# Windows 専用のスクリプトは CRLF（.gitattributes と同じ）。
+# .bat・.cmd には BOM を付けない（付けると、1行目のコマンドが壊れる）
+[*.{bat,cmd}]
+end_of_line = crlf
+
+# PowerShell 5.1 が日本語を正しく読めるように、BOM 付きの UTF-8 にする
+[*.ps1]
+end_of_line = crlf
+charset = utf-8-bom
