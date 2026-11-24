@@ -19,7 +19,9 @@ async function submitLogin() {
   const errorEl   = document.getElementById("loginError");
   const btn       = document.getElementById("loginSubmitBtn");
 
-  const employeeCode = codeInput?.value.trim();
+  // 社員IDは、全角の英数字・ハイフン・アンダーバー・空白を半角に直してから（NFKC）、前後の空白を除いて送る（レビューの A5）。
+  // 日本語入力のままで打っても、ログインできるように。パスワードは、打ったとおりに送る（直すと、別のパスワードになるため）
+  const employeeCode = codeInput?.value.normalize("NFKC").trim();
   const password     = passInput?.value ?? "";
 
   if (errorEl) errorEl.textContent = "";

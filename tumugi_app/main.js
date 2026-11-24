@@ -731,16 +731,37 @@ handleIpc("net:serverRequest", async (event, { path: reqPath, method, body, toke
   });
 });
 
-app.whenReady().then(() => {
-  restrictRendererSession();
-  clearConsentForExhibit(); // 前回の展示で最後の来場者がログアウトせずに閉じた場合に備える
-  // 待たない（ログインしているあいだに起動する）
-  startVoicevoxIfNeeded().catch(err => console.warn("[VOICEVOX] 起動の確認に失敗しました:", err.message));
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// =========================================
+// アプリは1つだけ開く（レビューの B11）
+// すでに開いているときに、もう1つ開こうとすると、2つ目は何もせずに終わり、開いているチャットの画面を前に出す
+// （最小化していれば戻す）。2つ目に付けた起動オプション（--exhibit・--cpu-only）は使わない。
+// 2つ開くと、保存のファイル（electron-store）・VOICEVOX の起動・Ollama を取り合い、
+// 展示モードでは、2つ目の起動で、1つ目の来場者の同意が消えてしまうため。
+// 2つ目は、同意を消す・VOICEVOX を立ち上げる・ウィンドウを作る（下の whenReady）の前に終わる。
+// =========================================
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  // 2つ目が開こうとしたときに届く（アプリの準備ができたあとに届くと、Electron が決めている）
+  app.on("second-instance", () => {
+    if (!mainWindow) return; // mac で、ウィンドウを全部閉じたあとなど（Dock から開き直せる）
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
-});
+
+  app.whenReady().then(() => {
+    restrictRendererSession();
+    clearConsentForExhibit(); // 前回の展示で最後の来場者がログアウトせずに閉じた場合に備える
+    // 待たない（ログインしているあいだに起動する）
+    startVoicevoxIfNeeded().catch(err => console.warn("[VOICEVOX] 起動の確認に失敗しました:", err.message));
+    createWindow();
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

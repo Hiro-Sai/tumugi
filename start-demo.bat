@@ -73,7 +73,7 @@ goto fail
 set "MESSAGE=サーバー（127.0.0.1:8080）が応答しません。docker compose logs app を確認してください。"
 goto fail
 :seed_failed
-set "MESSAGE=デモデータを作り直せませんでした。.env の DEMO_SEED が true か確認してください。"
+set "MESSAGE=デモデータを作り直せませんでした。上のメッセージを確認してください（.env の DEMO_PASSWORD が空のときや、デモ用ではない社員がいるときに止まります）。"
 goto fail
 :no_ollama
 set "MESSAGE=Ollama が見つかりません：%OLLAMA_APP%"

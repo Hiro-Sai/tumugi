@@ -2,6 +2,8 @@
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/emotion_scores.php';
 require_once __DIR__ . '/../includes/aggregate_rules.php';
+// 入力の受け方（readJsonInput）を、ほかの API とそろえるため
+require_once __DIR__ . '/../includes/employee_admin.php';
 startApi();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -17,13 +19,17 @@ if ($employeeId === null) {
     exit;
 }
 
-$input          = json_decode(file_get_contents('php://input'), true);
-$emotion        = $input['emotion'] ?? 'normal';
+// 本文が JSON のオブジェクトでないときは、空として扱う（readJsonInput）。
+$input          = readJsonInput();
+$emotion        = $input['emotion'] ?? null;
 $isCrisis       = !empty($input['is_crisis']) ? 1 : 0;
 $harassmentType = $input['harassment_type'] ?? 'none';
 
-// 感情ごとのスコア表は includes/emotion_scores.php に一元化している
-if (!array_key_exists($emotion, EMOTION_SCORES)) {
+// 感情ごとのスコア表は includes/emotion_scores.php に一元化している。
+// emotion がない・文字でない（配列など）ときも、400 で断る（レビューの A5）。
+// 前は、配列だと 500 になり、ないと normal として記録していた。
+// アプリは、気持ちが分かった回だけ送り、分からない回を normal で埋めない。サーバーも埋めない
+if (!is_string($emotion) || !array_key_exists($emotion, EMOTION_SCORES)) {
     http_response_code(400);
     echo json_encode(['error' => '不正な emotion 値です']);
     exit;

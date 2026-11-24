@@ -10,6 +10,8 @@
 // 社員の人数で判定すると、人数は多くても記録がある人が少ない部署で、少人数の値がそのまま出てしまうため。
 // 10名は、ストレスチェック制度の集団分析の目安（10人を下回る集団の結果は、
 // 全員の同意がない限り事業者に渡さない）に合わせている。
+// 変えるときは、同意画面の文（tumugi_app/index.html の「10名以上のグループ単位」）と README も合わせること。
+// 同意画面の文は tumugi_app/test/server-rules.test.js で確かめている（README は確かめていない）。
 // -----------------------------------------
 define('MIN_DEPT_SIZE', 10);
 
@@ -19,6 +21,7 @@ define('AGGREGATE_WINDOW_DAYS', 7);
 // 感情ログを残す日数。過ぎた記録は、ログインに成功するたびに、全員分消す（api/login.php）。
 // 集計に使う日数（AGGREGATE_WINDOW_DAYS）より長くすること。
 // 変えるときは、同意画面の文（tumugi_app/index.html の「14日を過ぎると消えます」）と README も合わせること。
+// 同意画面の文は tumugi_app/test/server-rules.test.js で確かめている（README は確かめていない）。
 define('EMOTION_LOG_RETENTION_DAYS', 14);
 
 // 集計に入れ始める時刻（employees.counted_from）からこの日数がたつまで、その社員の記録は集計に入れない。

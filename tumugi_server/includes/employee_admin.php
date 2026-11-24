@@ -20,7 +20,7 @@ define('TEMP_PASSWORD_LENGTH', 12);
 define('TEMP_PASSWORD_ALPHABET', 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789');
 
 // 社員IDに使える文字と長さ。名前・部署の最大文字数
-// （アプリの tumugi_app/js/employee-rules.js と同じにすること）
+// （アプリの tumugi_app/js/employee-rules.js と同じにすること。エラーの文も含めて、tumugi_app/test/server-rules.test.js で確かめている）
 // D は、末尾の改行を許さないため（$ は、ふつう最後の改行の手前にも当たる）
 define('EMPLOYEE_CODE_PATTERN', '/^[A-Za-z0-9_-]{1,20}$/D');
 define('EMPLOYEE_TEXT_MAX_CHARS', 50);

@@ -30,6 +30,15 @@ function readAuth(code) {
   return fixture([{ op: "read_auth", code }])[0];
 }
 
+// 表ごとの行の数（login_attempts など）
+function readCounts() {
+  return fixture([{ op: "read_counts" }])[0];
+}
+
+// 空の社員ID・パスワードを断る文と、形に合わない社員IDを断る文
+const EMPTY_INPUT_ERROR = "社員IDとパスワードを入力してください";
+const CODE_FORMAT_ERROR = "社員IDは、半角の英数字・-・_ の20文字までで入力してください";
+
 // ログインに失敗（401）するまでの時間（ミリ秒）
 async function timeFailedLogin(code, pw) {
   const start = performance.now();
@@ -221,6 +230,78 @@ test("社員IDは、大文字・小文字が違っても、前後に空白があ
   const spaced = await login("  E001  ", pw);
   assert.equal(spaced.status, 200);
   assert.equal(spaced.json.employee_id, row.id);
+});
+
+// ---------- 入力の形（レビューの A5） ----------
+
+test("社員IDの前後の全角の空白も、除いてからログインできる（社員の管理と同じ決まり）", async () => {
+  const pw = addEmployee("E001");
+  const [row] = fixture([{ op: "read_employee", code: "E001" }]);
+  // 　 は全角の空白
+  const res = await login("　E001　", pw);
+  assert.equal(res.status, 200);
+  assert.equal(res.json.employee_id, row.id);
+});
+
+test("形に合わない社員IDは、形を知らせる 400 で、失敗の記録に入らない。20文字ちょうどなら今までどおり 401", async () => {
+  addEmployee("E001");
+  const codes = [
+    "Ｅ００１", // 全角（アプリは半角に直してから送るが、サーバーは直さない）
+    "E".repeat(21), // 21文字
+    "E".repeat(60), // 記録の欄（50文字）より長い。前は 500 になっていた
+    "E001;",
+    "E 001", // 中の空白
+    "E001ー", // 長音の「ー」（日本語入力のままで「-」を打つと、こうなる）
+  ];
+  for (const code of codes) {
+    const res = await login(code, randomValue());
+    assert.equal(res.status, 400, code);
+    assert.equal(res.json.error, CODE_FORMAT_ERROR, code);
+  }
+  assert.equal(readCounts().login_attempts, 0);
+
+  // 20文字ちょうどは形に合うので、いない社員IDとして 401 になり、失敗が記録される
+  const longest = "E".repeat(20);
+  assert.equal((await login(longest, randomValue())).status, 401);
+  assert.equal(readAuth(longest).failed_attempts, 1);
+});
+
+test("社員IDやパスワードが配列などだと 400。500 にならず、記録も増えない。数の社員IDは文字として扱う", async () => {
+  const pw = addEmployee("E001");
+  const bodies = [
+    { employee_code: ["E001"], password: pw },
+    { employee_code: { code: "E001" }, password: pw },
+    { employee_code: true, password: pw },
+    { employee_code: null, password: pw },
+    { employee_code: "E001", password: [pw] },
+    { employee_code: "E001", password: { pw } },
+    { employee_code: "E001", password: 12345678 },
+    { employee_code: "E001", password: true },
+  ];
+  for (const body of bodies) {
+    const label = JSON.stringify(body);
+    const res = await api("POST", "/login.php", { body });
+    assert.equal(res.status, 400, label);
+    assert.equal(res.json.error, EMPTY_INPUT_ERROR, label);
+  }
+  assert.equal(readCounts().login_attempts, 0);
+  assert.equal(readAuth("E001").tokens, 0);
+
+  // 数の社員IDは、文字にして使う（社員の管理の API と同じ）
+  const numberPw = addEmployee("1234");
+  const numeric = await api("POST", "/login.php", { body: { employee_code: 1234, password: numberPw } });
+  assert.equal(numeric.status, 200);
+});
+
+test("本文が JSON のオブジェクトでないと 400。500 にならず、記録も増えない", async () => {
+  addEmployee("E001");
+  // JSON の文字列・数・null・配列と、JSON でない文
+  for (const body of ['"E001"', "12345", "null", "[]", '["E001", "password"]', "E001"]) {
+    const res = await api("POST", "/login.php", { body });
+    assert.equal(res.status, 400, body);
+    assert.equal(res.json.error, EMPTY_INPUT_ERROR, body);
+  }
+  assert.equal(readCounts().login_attempts, 0);
 });
 
 test("ログインすると、期限の切れたトークンが（ほかの社員の分も）消える", async () => {

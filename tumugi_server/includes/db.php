@@ -48,9 +48,11 @@ function getDbConnection(): PDO {
 //   断らないと、ほかのページからログインを試して、他人の社員IDをロックさせられる。
 //   アプリは、いつも application/json を付けて送る（main.js の net:serverRequest）。
 // （レビューの B2。2026-11-20 に、CORS の設定を消して、この形にした）
+// - 捕まえていない例外は、JSON の 500 で返す（respondUncaughtException。レビューの A5）。
 // -----------------------------------------
 function startApi(): void {
     header('Content-Type: application/json; charset=utf-8');
+    set_exception_handler('respondUncaughtException');
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isJsonContentType($_SERVER['CONTENT_TYPE'] ?? '')) {
         http_response_code(415);
@@ -63,6 +65,29 @@ function startApi(): void {
 function isJsonContentType(string $contentType): bool {
     $mediaType = strtolower(trim(explode(';', $contentType, 2)[0]));
     return $mediaType === 'application/json';
+}
+
+// -----------------------------------------
+// 捕まえていない例外（DB のエラー・型のエラーなど）を、JSON の 500 で返す（startApi() が登録する）。
+// これがないと、本文のない 500 になり、アプリは「ログインに失敗しました」のような、原因の分からない文を出す。
+// 例外の中身（種類・文・ファイルと行）は、サーバーのログにだけ残し、応答には出さない
+// （ファイルの場所や SQL の一部が入ることがあるため）。
+// 応答を返し始めたあと（ヘッダーを送ったあと）なら、ログに残すだけにする（応答の JSON を壊さないため）。
+// -----------------------------------------
+function respondUncaughtException(Throwable $e): void {
+    error_log(sprintf(
+        '想定外のエラー: %s: %s（%s:%d）',
+        get_class($e),
+        $e->getMessage(),
+        $e->getFile(),
+        $e->getLine()
+    ));
+    if (headers_sent()) {
+        return;
+    }
+    http_response_code(500);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode(['error' => 'サーバーで予期しないエラーが起きました。時間をおいて、もう一度お試しください']);
 }
 
 // -----------------------------------------

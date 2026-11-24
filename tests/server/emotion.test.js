@@ -146,6 +146,43 @@ test("知らない harassment_type は 400（emotion は正しく送る。記録
   assert.equal(readLogs().length, 0);
 });
 
+// ---------- 入力の形（レビューの A5） ----------
+
+const EMOTION_ERROR = "不正な emotion 値です";
+
+test("emotion がないと 400。normal として記録しない（危機・ハラスメントの印だけあっても）", async () => {
+  const { token } = await setupEmployee();
+  for (const body of [{}, { is_crisis: true }, { harassment_type: "received" }]) {
+    const label = JSON.stringify(body);
+    const res = await save(token, body);
+    assert.equal(res.status, 400, label);
+    assert.equal(res.json.error, EMOTION_ERROR, label);
+  }
+  assert.equal(readLogs().length, 0);
+});
+
+test("emotion が文字でない（配列・オブジェクト・数・真偽値・null）と 400。500 にならず、記録も増えない", async () => {
+  const { token } = await setupEmployee();
+  for (const emotion of [["happy"], { happy: true }, 10, true, null]) {
+    const label = JSON.stringify(emotion);
+    const res = await save(token, { emotion });
+    assert.equal(res.status, 400, label);
+    assert.equal(res.json.error, EMOTION_ERROR, label);
+  }
+  assert.equal(readLogs().length, 0);
+});
+
+test("本文が JSON のオブジェクトでないと 400。normal として記録しない", async () => {
+  const { token } = await setupEmployee();
+  // JSON の文字列・数・null・配列と、JSON でない文
+  for (const body of ['"happy"', "10", "null", "[]", '["happy"]', "happy"]) {
+    const res = await save(token, body);
+    assert.equal(res.status, 400, body);
+    assert.equal(res.json.error, EMOTION_ERROR, body);
+  }
+  assert.equal(readLogs().length, 0);
+});
+
 test("記録は、その社員の行として1行増える。感情・スコア・危機・ハラスメントが保存される", async () => {
   const { token } = await setupEmployee();
   // 別の社員の行は増えない

@@ -8,7 +8,8 @@
 // - 今のパスワードが違うときは 403 にする。401 にすると、アプリは「ログインが切れた」と見なしてログアウトする。
 // - 試せる回数は、ログインと共通（includes/login_guard.php）。今のパスワードが合ったら、間違えた数を0に戻す。
 // - 今のパスワードを、新しいパスワードの決まりより先に確かめる。間違えた回数を必ず数えるため。
-// - 新しいパスワードの決まりは、アプリ（tumugi_app/js/password.js）と同じにすること。
+// - 新しいパスワードの決まりは、アプリ（tumugi_app/js/password.js）と同じにすること
+//   （エラーの文も含めて、tumugi_app/test/server-rules.test.js で確かめている）。
 // =========================================
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/login_guard.php';
