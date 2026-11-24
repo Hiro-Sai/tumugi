@@ -6,9 +6,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "build-win": "electron-builder --win",
-    "build-mac": "electron-builder --mac",
-    "build": "electron-builder --win --mac"
+    "build-win": "electron-builder --win"
   },
   "build": {
     "appId": "com.tumugi.app",
@@ -28,12 +26,10 @@
       "ipc-guard.js",
       "index.html",
       "login.html",
-      "admin-demo.html",
       "admin-dashboard.html",
       "js/**",
       "css/**",
       "images/**",
-      "!**/node_modules/**",
       "!**/.git/**"
     ],
     "win": {
@@ -57,38 +53,6 @@
         "ja"
       ],
       "language": "1041"
-    },
-    "mac": {
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "images/icon.icns",
-      "category": "public.app-category.social-networking",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
-    },
-    "dmg": {
-      "title": "つむぎ インストーラー",
-      "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
     }
   },
   "dependencies": {
