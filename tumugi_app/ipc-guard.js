@@ -2,6 +2,7 @@
 // IPC の入口の守り（レビューの B3）
 //   - 送り主の確かめ（isTrustedSender）
 //   - 保存の IPC（store:get・set・delete）で通すキー（STORE_KEYS・isAllowedStoreKey）
+//   - そのうち、ディスクに保存せず、main.js のメモリにだけ置くキー（SESSION_KEYS・isSessionKey。レビューの B9）
 // Electron に依存しない純粋な関数だけを置き、main.js とテスト（test/ipc-guard.test.js）から使う。
 // =========================================
 
@@ -23,6 +24,20 @@ function isAllowedStoreKey(key) {
   return typeof key === "string" && STORE_KEYS.includes(key);
 }
 
+// STORE_KEYS のうち、ログインの情報（js/auth.js の AUTH_*_KEY）。ディスクに保存せず、main.js のメモリにだけ置く（レビューの B9）。
+// ログインの情報のキーを足すときは、ここにも足すこと（足し忘れると、その値がディスクに書かれる。test/ipc-guard.test.js が落ちる）。
+const SESSION_KEYS = Object.freeze([
+  "auth_token",
+  "auth_employee_id",
+  "auth_department",
+  "auth_expires_at",
+  "auth_is_admin",
+]);
+
+function isSessionKey(key) {
+  return typeof key === "string" && SESSION_KEYS.includes(key);
+}
+
 // IPC の送り主が、アプリの中の画面（アプリのフォルダの HTML を開いた、いちばん外の枠）か。
 // 送り主の枠（event.senderFrame）は、もうないときは null になり、消えたあとに url などを読むと
 // 例外になることもあるので、そのときも断る。HTML の中の枠（iframe）や、アプリの外の画面からの IPC も断る。
@@ -35,4 +50,4 @@ function isTrustedSender(event, appDir) {
   }
 }
 
-module.exports = { STORE_KEYS, isAllowedStoreKey, isTrustedSender };
+module.exports = { STORE_KEYS, SESSION_KEYS, isAllowedStoreKey, isSessionKey, isTrustedSender };

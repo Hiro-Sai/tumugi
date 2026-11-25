@@ -1,6 +1,6 @@
 // =========================================
 // test/ipc-guard.test.js
-// ipc-guard.js（IPC の入口の守り。レビューの B3）の単体テスト（実行：npm test）
+// ipc-guard.js（IPC の入口の守り。レビューの B3・B9）の単体テスト（実行：npm test）
 // =========================================
 
 const test   = require("node:test");
@@ -9,7 +9,7 @@ const fs     = require("fs");
 const path   = require("path");
 const { pathToFileURL } = require("url");
 
-const { STORE_KEYS, isAllowedStoreKey, isTrustedSender } = require("../ipc-guard");
+const { STORE_KEYS, SESSION_KEYS, isAllowedStoreKey, isSessionKey, isTrustedSender } = require("../ipc-guard");
 
 // main.js と同じく、アプリのフォルダ（このテストの1つ上）を使う。
 // このフォルダの名前に日本語が入っていても、正しく確かめられることも見る
@@ -121,6 +121,52 @@ test("STORE_KEYS: 画面側が保存の IPC に渡すキーと、ちょうど同
 });
 
 // -----------------------------------------
+// isSessionKey（ディスクに保存せず、メモリにだけ置くキー。レビューの B9）
+// -----------------------------------------
+test("isSessionKey: ログインの情報の5つだけで、どれも保存の IPC で通すキー（同意などは入れない）", () => {
+  assert.deepEqual([...SESSION_KEYS].sort(), [
+    "auth_department",
+    "auth_employee_id",
+    "auth_expires_at",
+    "auth_is_admin",
+    "auth_token",
+  ]);
+  for (const key of SESSION_KEYS) {
+    assert.equal(isAllowedStoreKey(key), true, key);
+    assert.equal(isSessionKey(key), true, key);
+  }
+  for (const key of [
+    "emotion_consent_map",
+    "memory_1",
+    "auth_",
+    "AUTH_TOKEN",
+    " auth_token",
+    "",
+    undefined,
+    null,
+    1,
+    ["auth_token"],
+    { toString: () => "auth_token" },
+  ]) {
+    assert.equal(isSessionKey(key), false, `${typeof key}: ${String(key)}`);
+  }
+});
+
+// 画面側（js/*.js）のログインの情報のキー（AUTH_*_KEY）と、SESSION_KEYS がちょうど同じか。
+// ログインの情報を足して SESSION_KEYS を直し忘れる（その値だけディスクに書いてしまう）のを防ぐ
+test("SESSION_KEYS: 画面側のログインの情報のキー（AUTH_*_KEY）と、ちょうど同じ", () => {
+  const jsDir = path.join(appDir, "js");
+  const source = fs.readdirSync(jsDir)
+    .filter(name => name.endsWith(".js"))
+    .map(name => fs.readFileSync(path.join(jsDir, name), "utf8"))
+    .join("\n");
+
+  const values = [...source.matchAll(/const\s+AUTH_[A-Z0-9_]*_KEY\s*=\s*"([^"]+)"/g)].map(m => m[1]);
+  assert.ok(values.length > 0, "AUTH_*_KEY の定義が見つからない");
+  assert.deepEqual(values.sort(), [...SESSION_KEYS].sort());
+});
+
+// -----------------------------------------
 // main.js（IPC の登録のしかた）
 // -----------------------------------------
 test("main.js: IPC は handleIpc・onIpc でだけ登録する（送り主の確かめを付け忘れないように）", () => {
@@ -130,4 +176,21 @@ test("main.js: IPC は handleIpc・onIpc でだけ登録する（送り主の確
   assert.equal(count(/ipcMain\.handle\(/g), 1);
   assert.equal(count(/ipcMain\.on\(/g), 1);
   assert.equal(count(/ipcMain\.(?:once|handleOnce|addListener|prependListener|prependOnceListener)\(/g), 0);
+});
+
+test("main.js: 保存の IPC の3つの入口は、どれもストアより先に isSessionKey を見る（ログインの情報をディスクに書かないように）", () => {
+  const source = fs.readFileSync(path.join(appDir, "main.js"), "utf8");
+  for (const channel of ["store:get", "store:set", "store:delete"]) {
+    const start = source.indexOf(`handleIpc("${channel}"`);
+    assert.ok(start >= 0, `${channel} の登録が見つからない`);
+    // 登録の終わり（行の頭の「});」）までを見る
+    const end = source.indexOf("\n});", start);
+    assert.ok(end > start, `${channel} の登録の終わりが見つからない`);
+    const handler = source.slice(start, end);
+    const routed = handler.indexOf("isSessionKey(key)");
+    const toStore = handler.indexOf("storeTask(");
+    assert.ok(routed >= 0, `${channel} が isSessionKey を見ていない`);
+    assert.ok(toStore >= 0, `${channel} の、ストアの読み書きが見つからない`);
+    assert.ok(routed < toStore, `${channel} は、ストアより先に isSessionKey を見る`);
+  }
 });

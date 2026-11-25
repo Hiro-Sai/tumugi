@@ -87,6 +87,11 @@ let hasSavedMemory = false;
 // 前の記憶を読めなかったか（パスワードがリセットされた・ほかの PC で変えた・ファイルが壊れたなど。
 // main.js の memory:get、扱いは memory-crypto.js の openMemoryRecord）。「はじめに」の画面で、もう一度聞く理由を出すのに使う
 let memoryLost = false;
+// 記憶が変わった回数。記憶を変える関数（loadMemoryFromStore・saveMemory・resetAllMemory）で1つ増やす。
+// 記憶の抽出（extractAndSaveMemory）は、始める前の記憶の写しに足して保存するので、Ollama を待つあいだに
+// 本人が記憶の画面で直す・削除する・全部忘れると、その保存で元に戻ってしまう。そのため、保存の前にこの回数を比べ、
+// 変わっていたら、その回の結果を入れない（本人の操作を優先する。レビューの E5。test/memory-extraction.test.js が確かめる）
+let memoryRevision = 0;
 
 // 以前は記憶を localStorage に平文で、全社員共通の1つとして保存していた。
 // 誰の記憶か分からないため、引き継がずに消す（PC ごとの「はじめまして済み」の印も同じ）。
@@ -102,6 +107,7 @@ async function loadMemoryFromStore() {
     const result = await window.electronAPI.memoryGet();
     // 値の形だけそろえる（配列は「、」でつなぎ、数字は文字に、オブジェクトなどは捨てる）。数と長さは切らない（js/memory-rules.js）
     userMemory = TumugiMemoryRules.cleanLoaded(result?.memory);
+    memoryRevision += 1;
     hasSavedMemory = !!result?.exists;
     memoryLost = !!result?.lost;
   } catch (e) {
@@ -115,6 +121,7 @@ function loadMemory() {
 
 function saveMemory(memory) {
   userMemory = { ...memory };
+  memoryRevision += 1;
   hasSavedMemory = true;
   window.electronAPI.memorySet(userMemory).catch(e => console.warn("[Memory] 保存失敗:", e.message));
 }
@@ -143,6 +150,7 @@ function queueMemoryExtraction(userText, assistantText) {
 // 会話からユーザー情報を抽出して保存する
 async function extractAndSaveMemory(exchanges) {
   const currentMemory = loadMemory();
+  const startRevision = memoryRevision; // 保存の前に、待つあいだに記憶が変わっていないかを確かめる（レビューの E5）
   const prompt = TumugiPrompt.buildMemoryPrompt(exchanges, currentMemory);
 
   try {
@@ -176,6 +184,13 @@ async function extractAndSaveMemory(exchanges) {
     if (skipped > 0) console.log(`[Memory] ${skipped} 件は、使えない形か、記憶がいっぱいのため入れませんでした`);
     if (Object.keys(applied).length === 0) return;
 
+    // Ollama を待つあいだに記憶が変わっていたら（記憶の画面で直した・削除した・全部忘れたなど）、入れない。
+    // 始める前の写しに足した記憶を保存すると、本人が直した分が元に戻るため。
+    // この3往復の分は、次の抽出にも回さない（本人が消した中身を、AI がまた拾うことがあるため。ユーザーが選んだ）
+    if (memoryRevision !== startRevision) {
+      console.log("[Memory] 抽出のあいだに記憶が変わったため、今回の分は入れませんでした");
+      return;
+    }
     saveMemory(newMemory);
     // 入れた分は、次の返事の発言の後ろにも付ける（返事のシステムプロンプトは、会話の途中では変えない）
     pendingFacts = { ...pendingFacts, ...applied };
@@ -1023,6 +1038,8 @@ async function toggleEmotionConsent() {
 // ログインの期限が切れている（トークンがない）ときと、サーバーが 401 を返したときは、送らずに
 // markSessionExpired を呼ぶ。ここではログアウトしない（返事や危機の案内の途中で、画面を切り替えないため。レビューの A11）。
 // 期限は、同意より先に見る（同意していない社員でも、期限が切れたら知らせる）。
+// console には、送る値（感情・危機か・ハラスメントの種類）も、サーバーの返事（スコア）も出さない
+// （社員の気持ちなので。開発者ツールを開いた人に見えないように。レビューの E6。test/console-log.test.js が確かめる）。
 // =========================
 async function sendEmotionLog(emotion, isCrisis, harassmentType) {
   const token = await getStoredToken();
@@ -1033,7 +1050,7 @@ async function sendEmotionLog(emotion, isCrisis, harassmentType) {
 
   const consented = await isEmotionLoggingConsented();
   if (!consented) {
-    console.log("[EmotionLog] 同意していないため送信をスキップ:", emotion, isCrisis, harassmentType);
+    console.log("[EmotionLog] 同意していないため送信をスキップ");
     return;
   }
 
@@ -1058,7 +1075,7 @@ async function sendEmotionLog(emotion, isCrisis, harassmentType) {
     return;
   }
 
-  console.log("[EmotionLog] 記録完了:", res.data);
+  console.log("[EmotionLog] 記録完了");
 }
 
 // キーワードに当たった回の感情ログ（レビューの A1）。判定の答え（judging は classifySafety の Promise）を待って、
@@ -1449,6 +1466,7 @@ function showResetConfirm(show) {
 function resetAllMemory() {
   // 消すのはログイン中の社員の記憶だけ。次にログインしたとき、「はじめまして」画面がまた出る
   userMemory = {};
+  memoryRevision += 1;
   hasSavedMemory = false;
   window.electronAPI.memoryDelete().catch(e => console.warn("[Memory] 削除失敗:", e.message));
   requestRebuildAfterMemoryChange();

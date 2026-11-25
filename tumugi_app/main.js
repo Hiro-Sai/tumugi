@@ -7,7 +7,7 @@ const { buildRelayUrl, isLocalRequestUrl, isAllowedNavigation, isAllowedOllamaMo
 const { newSalt, deriveMemoryKey, encryptMemory, reencryptMemory, openMemoryRecord } = require("./memory-crypto");
 const { STREAM_PIECE_CHANNEL, withRelayOptions, createLineSplitter } = require("./ollama-relay");
 const { createTaskQueue } = require("./task-queue");
-const { isAllowedStoreKey, isTrustedSender } = require("./ipc-guard");
+const { SESSION_KEYS, isAllowedStoreKey, isSessionKey, isTrustedSender } = require("./ipc-guard");
 
 const store = new Store();
 // ストアの読み書きの順番待ち（下の「IPC: electron-store 操作」で説明）
@@ -228,6 +228,9 @@ function restrictRendererSession() {
 //     次に読むときに鍵が合わず、記憶が消えてしまう。
 // 同期の呼び方だったときは、どの操作も途中で止まらず、来た順に終わっていた。その順を守る。
 // 時間のかかる鍵づくり（deriveMemoryKey）は、順番待ちの外で行う（ほかの読み書きを待たせないため）。
+//
+// ログインの情報（トークン・社員ID など。ipc-guard.js の SESSION_KEYS）だけは、ストアに書かず、
+// このプロセスのメモリ（下の sessionValues）にだけ置く（レビューの B9）。
 // =========================================
 
 function isEncWrapper(value) {
@@ -285,13 +288,24 @@ function checkStoreKey(channel, key) {
   throw new Error(`[ipc] 保存の IPC で、許可していないキーを断りました: ${channel} ${shown}`);
 }
 
+// ログインの情報（SESSION_KEYS）は、ディスクに保存せず、ここにだけ置く（レビューの B9）。
+// アプリを閉じると消えるので、ログアウトせずに閉じても、トークンが保存のファイルに残らない。
+// メモリだけで、すぐ終わるので、順番待ち（storeTask）には入れない。ログアウト（auth:logout）でも消す。
+// 前の版がストアに残した分は、起動のときに clearLeftoverAuth が消す。
+const sessionValues = new Map();
+
 handleIpc("store:get", (event, key) => {
   checkStoreKey("store:get", key);
+  if (isSessionKey(key)) return sessionValues.get(key);
   return storeTask(() => unwrapValue(store.get(key)));
 });
 
 handleIpc("store:set", (event, key, value) => {
   checkStoreKey("store:set", key);
+  if (isSessionKey(key)) {
+    sessionValues.set(key, value);
+    return true;
+  }
   return storeTask(async () => {
     store.set(key, await wrapValue(value));
     return true;
@@ -300,6 +314,10 @@ handleIpc("store:set", (event, key, value) => {
 
 handleIpc("store:delete", (event, key) => {
   checkStoreKey("store:delete", key);
+  if (isSessionKey(key)) {
+    sessionValues.delete(key);
+    return true;
+  }
   return storeTask(() => {
     store.delete(key);
     return true;
@@ -435,6 +453,8 @@ onIpc("auth:login-success", () => {
   if (mainWindow) mainWindow.loadFile("index.html");
 });
 onIpc("auth:logout", () => {
+  // ログインの情報を消す（画面側の clearAuth でも消しているが、念のため。レビューの B9）
+  sessionValues.clear();
   // 次にログインする社員が、前の社員の鍵（展示モードでは記憶）を使えないようにする。
   // 順番待ちに入れて、ログアウトの前に届いた記憶の保存などを、前の社員の鍵で終えてから消す
   storeTask(() => {
@@ -717,7 +737,8 @@ handleIpc("net:voicevoxRequest", async (event, { path: reqPath, method, body, re
 // =========================================
 // IPC: API サーバーへの中継
 // =========================================
-handleIpc("net:serverRequest", async (event, { path: reqPath, method, body, token } = {}) => {
+// 画面からの中継（net:serverRequest）と、起動のときの片付け（下の clearLeftoverAuth）で使う
+async function requestServer({ path: reqPath, method, body, token } = {}) {
   const httpMethod = method || "GET";
   const url = buildRelayUrl("server", reqPath, httpMethod);
   if (!url) return rejectRelay("server", httpMethod, reqPath);
@@ -729,7 +750,39 @@ handleIpc("net:serverRequest", async (event, { path: reqPath, method, body, toke
     body,
     responseType: "json",
   });
-});
+}
+
+handleIpc("net:serverRequest", (event, options) => requestServer(options));
+
+// =========================================
+// 起動のとき：前の版が保存のファイルに残したログインの情報を片付ける（レビューの B9）
+// 前の版は、ログインの情報をストアに書いていたので、ログアウトせずに閉じると、そのまま残っている。
+// ストアから消し、トークンが残っていれば、画面のログアウトと同じ形でサーバーに送って、サーバーでも無効にする。
+// サーバーに接続できないときは、消すだけになる（サーバーのトークンは、期限の24時間で切れる）。
+// トークンの値は、ログに出さない。
+// =========================================
+const LEFTOVER_TOKEN_KEY = "auth_token"; // 前の版の js/auth.js の AUTH_TOKEN_KEY と同じ
+
+async function clearLeftoverAuth() {
+  const leftoverToken = await storeTask(async () => {
+    // ないキーは消さない（ストアは、消すたびにファイルを書き直すため）
+    const leftKeys = SESSION_KEYS.filter(key => store.has(key));
+    if (leftKeys.length === 0) return undefined;
+    const token = await unwrapValue(store.get(LEFTOVER_TOKEN_KEY));
+    for (const key of leftKeys) store.delete(key);
+    console.warn("[Auth] 前の版が保存のファイルに残したログインの情報を消しました");
+    return token;
+  });
+  if (typeof leftoverToken !== "string" || leftoverToken === "") return;
+
+  const res = await requestServer({ path: "/logout.php", method: "POST", token: leftoverToken });
+  if (res.ok) {
+    console.warn("[Auth] 残っていたトークンを、サーバーでも無効にしました");
+  } else {
+    console.warn("[Auth] 残っていたトークンを、サーバーで無効にできませんでした（期限の24時間で切れます）:",
+      res.status ? `${res.reason} ${res.status}` : res.reason);
+  }
+}
 
 // =========================================
 // アプリは1つだけ開く（レビューの B11）
@@ -754,6 +807,8 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(() => {
     restrictRendererSession();
     clearConsentForExhibit(); // 前回の展示で最後の来場者がログアウトせずに閉じた場合に備える
+    // 待たない（サーバーの返事を待って、ウィンドウを開くのを遅らせない）
+    clearLeftoverAuth().catch(err => console.warn("[Auth] 前の版が残したログインの情報を片付けられませんでした:", err.message));
     // 待たない（ログインしているあいだに起動する）
     startVoicevoxIfNeeded().catch(err => console.warn("[VOICEVOX] 起動の確認に失敗しました:", err.message));
     createWindow();

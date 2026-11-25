@@ -1,6 +1,7 @@
 // =========================================
 // auth.js
-// ログイン処理・トークン管理（electron-store経由、preload.js の window.electronAPI 使用）
+// ログイン処理・トークン管理（preload.js の window.electronAPI の保存の IPC 経由。
+// ログインの情報は、main.js のメモリにだけ置き、ディスクには保存しない。アプリを閉じると消える。レビューの B9）
 // サーバー通信はすべて window.electronAPI.netServer() 経由（main.js側で固定URLに限定）
 // =========================================
 
